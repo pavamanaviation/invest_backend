@@ -17,16 +17,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-# urlpatterns = [
-#     path('admin/', admin.site.urls),
-# ]
-from django.contrib import admin
-from django.urls import path
-
 from invest_app.views import check_indian_time 
-from invest_app.customer_views import (customer_register)
+from invest_app.customer_views import (customer_register,verify_customer_otp)
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('check-time/', check_indian_time, name='check_indian_time'),
     path('customer-register', customer_register, name='customer_register'),
+    path('verify-customer-otp', verify_customer_otp, name='verify_customer_otp'),
 ]

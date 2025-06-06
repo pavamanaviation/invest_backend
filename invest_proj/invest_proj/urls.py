@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-from invest_app.views import check_indian_time 
+# from invest_app.views import check_indian_time 
 from invest_app.customer_views import (customer_register,verify_customer_otp)
 urlpatterns = [
     path('admin/', admin.site.urls),

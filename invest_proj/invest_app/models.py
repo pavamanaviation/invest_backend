@@ -30,7 +30,7 @@ from django.utils import timezone
 class CustomerRegister(models.Model):
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
-    email = models.EmailField(max_length=50,unique=True)
+    email = models.EmailField(max_length=50,unique=True,null=True, blank=True)
     mobile_no = models.CharField(max_length=15, default='')
     created_at =  models.DateTimeField(auto_now_add=True)
     

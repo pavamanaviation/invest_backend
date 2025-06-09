@@ -5,6 +5,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from django.db import IntegrityError
 from django.utils import timezone
+import requests
 from .models import CustomerRegister
 from .sms_utils import send_otp_sms
 from django.core.mail import EmailMultiAlternatives
@@ -24,33 +25,28 @@ def customer_register(request):
 
     try:
         data = json.loads(request.body)
-        token = data.get('google_token')
+        token = data.get('token')
         email = data.get('email')
         mobile_no = data.get('mobile_no')
 
-        if not any([token, email, mobile_no]):
-            return JsonResponse({"error": "Provide Google mail or email or mobile number."}, status=400)
-
-        # admin = PavamanAdminDetails.objects.order_by('id').first()
-        # if not admin:
-        #     return JsonResponse({"error": "Admin not configured."}, status=500)
+        first_name = ''
+        last_name = ''
 
         if token:
             google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
             response = requests.get(google_url)
+
             if response.status_code != 200:
-                return JsonResponse({"error": "Google token invalid."}, status=400)
+               return JsonResponse({"error": "Google token invalid."}, status=400)
+        
             google_data = response.json()
-            if "error" in google_data or not google_data.get("email"):
-                return JsonResponse({"error": "Invalid Google token."}, status=400)
+            if "error" in google_data:
+                    return JsonResponse({"error": "Invalid Token"}, status=400)
             email = google_data.get("email")
             first_name = google_data.get("given_name", "")
             last_name = google_data.get("family_name", "")
-        else:
-            first_name = ''
-            last_name = ''
-
-        # Check if user exists by email or mobile
+        if not email and not mobile_no:
+            return JsonResponse({"error": "Provide email or mobile number."}, status=400)
         customer = None
         if email:
             customer = CustomerRegister.objects.filter(email=email).first()
@@ -60,7 +56,7 @@ def customer_register(request):
         otp = generate_otp()
 
         if customer:
-            if customer.account_status == 1:
+            if customer.register_status == 1:
                 return JsonResponse({
                     "message": "Account already verified. Please login.",
                     "customer_id": customer.id,
@@ -71,26 +67,19 @@ def customer_register(request):
             # resend OTP if not verified
             customer.otp = otp
             customer.save(update_fields=['otp'])
-            # customer.otp_created_at = timezone.now()
-            # customer.save(update_fields=['otp', 'otp_created_at'])
-
         else:
             customer = CustomerRegister.objects.create(
                 email=email or '',
                 mobile_no=mobile_no or '',
+                first_name=first_name or '',
+                last_name=last_name or '',
                 otp=otp,
-                # otp_created_at=timezone.now(),
-                # account_status=0,
-                register_status=1,
                 register_type="Google" if token else "Email" if email else "Mobile",
                 
             )
-
-        # Send OTP
         if email:
             send_otp_email(email,first_name, otp)
         if mobile_no:
-            # send_otp_sms(mobile_no, otp)
             send_otp_sms([mobile_no], f"Hi,This is your OTP for password reset on Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it with anyone.")
 
         return JsonResponse({
@@ -106,71 +95,143 @@ def customer_register(request):
 def verify_customer_otp(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST requests are allowed."}, status=405)
-
     try:
         data = json.loads(request.body)
-        # customer_id = data.get('customer_id')
         otp = str(data.get('otp'))
         first_name = data.get('first_name', '')
         last_name = data.get('last_name', '')
         mobile_no = data.get('mobile_no', '')
         email = data.get('email', '')
+        # if not customer_id:
+        #     return JsonResponse({"error": "Customer ID is required."}, status=400)
 
         if not otp:
             return JsonResponse({"error": "OTP is required."}, status=400)
+        customer = None
+        if email and mobile_no:
+            customer = CustomerRegister.objects.filter(email=email, mobile_no=mobile_no).first()
+        elif email:
+            customer = CustomerRegister.objects.filter(email=email).first()
+        elif mobile_no:
+            customer = CustomerRegister.objects.filter(mobile_no=mobile_no).first()
 
-        customer = CustomerRegister.objects.filter(
-                email=email
-            ).first() or CustomerRegister.objects.filter(
-                mobile_no=mobile_no
-            ).first()
         if not customer:
-                return JsonResponse({"error": "User not found with the provided email or mobile number"}, status=404)
-        if not customer.otp:
-                return JsonResponse({"error": "OTP has expired or is missing"}, status=400)
-
-        # Google account already verified
-        if customer.register_type == "Google" and customer.account_status == 1:
-            if not customer.mobile_no and mobile_no:
+            return JsonResponse({"error": "User not found with the provided email or mobile number"}, status=404)
+        try:
+            if int(customer.otp) != int(otp):
+                return JsonResponse({"error": "Invalid OTP."}, status=400)
+        except:
+            return JsonResponse({"error": "Invalid OTP format."}, status=400)
+        update_fields = ['otp']  # otp will be cleared after successful verification
+        customer.otp = None
+        if customer.register_status != 1:
+            customer.register_status = 1
+            update_fields.append('register_status')
+            if first_name:
+                customer.first_name = first_name
+                update_fields.append('first_name')
+            if last_name:
+                customer.last_name = last_name
+                update_fields.append('last_name')
+            if mobile_no:
                 customer.mobile_no = mobile_no
-                customer.save(update_fields=['mobile_no'])
-            
-            return JsonResponse({
-                "message": "Google account already verified.",
-                "customer_id": customer.id,
-                "email": customer.email,
-                "first_name": customer.first_name,
-                "last_name": customer.last_name,
-                "mobile_no": customer.mobile_no,
-                "require_mobile": not bool(customer.mobile_no)
-            }, status=200)
+                update_fields.append('mobile_no')
+        elif customer.register_status == 1 and customer.account_status == 0:
+            if customer.otp_send_type == 'Mobile':
+                if not mobile_no or (customer.mobile_no and customer.mobile_no != mobile_no):
+                    return JsonResponse({"error": "Mobile number mismatch or missing for OTP verification."}, status=400)
+                if not customer.mobile_no:
+                    customer.mobile_no = mobile_no
+            elif customer.otp_send_type == 'Email':
+                if not email or (customer.email and customer.email != email):
+                    return JsonResponse({"error": "Email mismatch or missing for OTP verification."}, status=400)
+                if not customer.email:
+                    customer.email = email
+            else:
+                return JsonResponse({"error": "OTP send type is missing. Cannot verify."}, status=400)
 
-        if str(customer.otp) != otp:
-            return JsonResponse({"error": "Invalid OTP."}, status=400)
-        
-        # customer.clear_expired_otp()
-        # if not customer.otp or str(customer.otp) != str(otp):
-        #         return JsonResponse({"error": "Invalid OTP or OTP has expired"}, status=400)
-           
-        # Mark account as verified
-        customer.account_status = 1
-        if first_name:
-            customer.first_name = first_name
-        if last_name:
-            customer.last_name = last_name
-        if mobile_no:
-            customer.mobile_no = mobile_no
-        customer.otp = None  # Optional: clear OTP after use
-        customer.save(update_fields=['account_status', 'first_name', 'last_name', 'mobile_no', 'otp'])
-        
-        
+            customer.account_status = 1
+            update_fields.append('account_status')
+
+        else:
+            return JsonResponse({"error": "User is already fully verified."}, status=400)
+
+        # Clear otp_send_type after verification
+        customer.otp_send_type = None
+        update_fields.append('otp_send_type')
+
+        customer.save(update_fields=update_fields)
+
         return JsonResponse({
-            "message": "OTP verified successfully. Account is now active.",
+            "message": "OTP verified successfully.",
             "customer_id": customer.id,
             "email": customer.email,
             "mobile_no": customer.mobile_no,
             "first_name": customer.first_name,
             "last_name": customer.last_name,
+            "register_status": customer.register_status,
+            "account_status": customer.account_status,
+        }, status=200)
+
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON."}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+@csrf_exempt
+def customer_register_sec_phase(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed."}, status=405)
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+        email = data.get('email')
+        mobile_no = data.get('mobile_no')
+        first_name = data.get('first_name')
+        last_name = data.get('last_name')
+
+        if not customer_id:
+            return JsonResponse({"error": "Customer ID is required."}, status=400)
+
+        try:
+            customer = CustomerRegister.objects.get(id=customer_id)
+        except CustomerRegister.DoesNotExist:
+            return JsonResponse({"error": "Customer not found."}, status=404)
+
+        if customer.register_status != 1:
+            return JsonResponse({"error": "First phase registration incomplete."}, status=400)
+
+        otp = generate_otp()
+        otp_sent = False
+        otp_send_type = None
+        if not customer.mobile_no and mobile_no:
+            if CustomerRegister.objects.filter(mobile_no=mobile_no).exclude(id=customer.id).exists():
+                return JsonResponse({"error": "Mobile number already in use."}, status=400)
+            customer.mobile_no = mobile_no
+            send_otp_sms([mobile_no], f"Hi, This is your OTP for profile verification on Pavaman Aviation: {otp}. Valid for 2 minutes.")
+            otp_sent = True
+            otp_send_type = 'Mobile'
+        if not customer.email and email:
+            if CustomerRegister.objects.filter(email=email).exclude(id=customer.id).exists():
+                return JsonResponse({"error": "Email already in use."}, status=400)
+            customer.email = email
+            send_otp_email(email, first_name or customer.first_name, otp)
+            otp_sent = True
+            otp_send_type = 'Email'
+        if first_name:
+            customer.first_name = first_name
+        if last_name:
+            customer.last_name = last_name
+
+        if not otp_sent:
+            return JsonResponse({"error": "No new field to verify (mobile/email) or already provided."}, status=400)
+
+        customer.otp = otp
+        customer.save(update_fields=['otp_send_type','mobile_no','email','first_name', 'last_name', 'otp'])
+
+        return JsonResponse({
+            "message": "OTP sent. Please verify to complete your profile.",
+            "customer_id": customer.id
         }, status=200)
 
     except json.JSONDecodeError:
@@ -180,9 +241,6 @@ def verify_customer_otp(request):
 
 def send_otp_email(email, first_name, otp):
     subject = "[Pavaman] Please Verify Your Email"
-
-    # frontend_url =  settings.FRONTEND_URL
-    # full_link = f"{frontend_url}/verify-email/{verification_link}"
     logo_url = f"{settings.AWS_S3_BUCKET_URL}/static/images/aviation-logo.png"
 
     text_content = f"""

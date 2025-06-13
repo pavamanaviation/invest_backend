@@ -18,10 +18,17 @@ from django.contrib import admin
 from django.urls import path
 
 # from invest_app.views import check_indian_time 
-from invest_app.customer_views import (customer_register,verify_customer_otp,customer_register_sec_phase)
+from invest_app.customer_views import (customer_register,verify_customer_otp,customer_register_sec_phase,
+customer_login,pan_verification_request_view, pan_verification_result_view,
+fetch_pan_verification_result)
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('customer-register', customer_register, name='customer_register'),
     path('verify-customer-otp', verify_customer_otp, name='verify_customer_otp'),
     path('customer-register-sec-phase', customer_register_sec_phase, name='customer_register_sec_phase'),
+    path('customer-login', customer_login, name='customer_login'),
+    # path('pan-verification', pan_verification, name='pan_verification'),
+    path('verify-pan/', pan_verification_request_view, name='verify_pan'),
+    path('verify-pan-result/', pan_verification_result_view, name='verify_pan_result'),
+    path('api/pan-result/', fetch_pan_verification_result, name='fetch_pan_result'),
 ]

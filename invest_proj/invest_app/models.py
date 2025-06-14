@@ -42,6 +42,8 @@ class CustomerRegister(models.Model):
 
     register_status = models.IntegerField(default=0)
     account_status = models.IntegerField(default=0)
+    
+    kyc_accept_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
     status = models.IntegerField(default=1)
     def is_otp_valid(self):
         """Check if OTP is still valid (within 2 minutes)."""
@@ -73,13 +75,37 @@ class KYCDetails(models.Model):
     
 
     aadhar_number = models.CharField(max_length=12, unique=True, null=True, blank=True)
-    adhaar_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
+    aadhar_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
+    aadhar_task_id = models.CharField(max_length=100, blank=True, null=True)
+    idfy_aadhar_status = models.CharField(max_length=10, null=True, blank=True)
+    
     banck_account_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
     banck_name = models.CharField(max_length=50, null=True, blank=True)
     ifsc_code = models.CharField(max_length=11, null=True, blank=True)
+    banck_task_id = models.CharField(max_length=100, null=True, blank=True)
+    idfy_bank_status = models.CharField(max_length=10, null=True, blank=True)
     bank_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
-    status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
+    
+    status = models.IntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"KYC for {self.customer.email}" if self.customer else "KYC Details"
+class CustomerMoreDetails(models.Model):
+    customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+    # customer_kyc = models.ForeignKey(KYCDetails, on_delete=models.CASCADE, null=True, blank=True)
+
+    address = models.TextField(null=True, blank=True)
+    district = models.CharField(max_length=50, null=True, blank=True)
+    mandal = models.CharField(max_length=50, null=True, blank=True)
+    city = models.CharField(max_length=50, null=True, blank=True)
+    state = models.CharField(max_length=50, null=True, blank=True)
+    country = models.CharField(max_length=50, null=True, blank=True)
+    pincode = models.CharField(max_length=10, null=True, blank=True)
+    
+    dob = models.DateField(null=True, blank  =True)
+    gender = models.CharField(max_length=10, null=True, blank=True)
+    profession = models.CharField(max_length=50, null=True, blank=True)
+    designation = models.CharField(max_length=50, null=True, blank=True)
+    personal_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
+    created_at = models.DateTimeField(auto_now_add=True)

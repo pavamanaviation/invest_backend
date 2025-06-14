@@ -224,7 +224,3 @@ AWS_S3_BUCKET_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.
 
 # FRONTEND_URL = os.getenv("FRONTEND_URL")
 # RAZORPAY_CALLBACK_URL = os.getenv("RAZORPAY_CALLBACK_URL")
-
-# IDFY_API_KEY = os.environ.get('IDFY_API_KEY')
-# IDFY_CLIENT_ID = os.environ.get('IDFY_CLIENT_ID')
-# IDFY_URL = os.environ.get('IDFY_URL')

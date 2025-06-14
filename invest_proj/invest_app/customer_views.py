@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.db import IntegrityError
 from django.utils import timezone
 import requests
-from .models import CustomerRegister,KYCDetails
+from .models import CustomerRegister,KYCDetails, CustomerMoreDetails
 from .sms_utils import send_otp_sms
 from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
@@ -15,7 +15,18 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 import json
 # from .idfy_verification import verify_pan_idfy
+import uuid
+import time
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+import json
+from datetime import datetime
 
+from .idfy_verification import (send_pan_verification_request, get_pan_verification_result,
+verify_aadhar_sync,verify_bank_account_sync)
+
+from .models import KYCDetails, CustomerRegister
+from django.shortcuts import get_object_or_404
 def get_indian_time():
     india_tz = pytz.timezone('Asia/Kolkata')
     return timezone.now().astimezone(india_tz)
@@ -23,83 +34,6 @@ def get_indian_time():
 def generate_otp():
     return random.randint(100000, 999999)
 
-# @csrf_exempt
-# def customer_register(request):
-#     if request.method != 'POST':
-#         return JsonResponse({"error": "Only POST allowed."}, status=405)
-
-#     try:
-#         data = json.loads(request.body)
-#         token = data.get('token')
-#         email = data.get('email')
-#         mobile_no = data.get('mobile_no')
-
-#         first_name = ''
-#         last_name = ''
-
-#         if token:
-#             google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
-#             response = requests.get(google_url)
-
-#             if response.status_code != 200:
-#                return JsonResponse({"error": "Google token invalid."}, status=400)
-        
-#             google_data = response.json()
-#             if "error" in google_data:
-#                     return JsonResponse({"error": "Invalid Token"}, status=400)
-#             email = google_data.get("email")
-#             first_name = google_data.get("given_name", "")
-#             last_name = google_data.get("family_name", "")
-#         if not email and not mobile_no:
-#             return JsonResponse({"error": "Provide email or mobile number."}, status=400)
-#         customer = None
-#         if email:
-#             customer = CustomerRegister.objects.filter(email=email).first()
-#         if not customer and mobile_no:
-#             customer = CustomerRegister.objects.filter(mobile_no=mobile_no).first()
-
-#         otp = generate_otp()
-
-#         if customer:
-#             if customer.register_status == 1:
-#                 return JsonResponse({
-#                     "message": "Account already verified. Please proceed to next step.",
-#                     "customer_id": customer.id,
-#                     "email": customer.email,
-#                     "mobile_no": customer.mobile_no,
-#                 }, status=200)
-
-#             # resend OTP if not verified
-#             customer.otp = otp
-#             customer.changed_on = timezone.now()
-#             customer.save(update_fields=['otp', 'changed_on'])
-#             # customer.save(update_fields=['otp'])
-#         else:
-#             customer = CustomerRegister.objects.create(
-#                 email=email or '',
-#                 mobile_no=mobile_no or '',
-#                 first_name=first_name or '',
-#                 last_name=last_name or '',
-#                 otp=otp,
-#                 changed_on=timezone.now(),
-#                 register_type="Google" if token else "Email" if email else "Mobile",
-                
-#             )
-#         if email:
-#             send_otp_email(email,first_name, otp)
-#         if mobile_no:
-#             send_otp_sms([mobile_no], f"Hi,This is your OTP for password reset on Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it with anyone.")
-
-#         return JsonResponse({
-#             "message": "OTP sent. Please verify to continue. The OTP is valid for 2 minutes.",
-#             "customer_id": customer.id,
-#             "status_code": 200
-#         }, status=200)
-
-#     except json.JSONDecodeError:
-#         return JsonResponse({"error": "Invalid JSON."}, status=400)
-#     except Exception as e:
-#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 @csrf_exempt
 def customer_register(request):
     if request.method != 'POST':
@@ -286,7 +220,7 @@ def verify_customer_otp(request):
         update_fields.append('otp_send_type')
 
         customer.save(update_fields=update_fields)
-         # ✅ Final unified logic: If fully verified, treat as login
+         # Final unified logic: If fully verified, treat as login
         if customer.register_status == 1 and customer.account_status == 1:
             request.session['customer_id'] = customer.id
             request.session.save()
@@ -455,66 +389,6 @@ def customer_register_sec_phase(request):
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
-# @csrf_exempt
-# def customer_register_sec_phase(request):
-#     if request.method != 'POST':
-#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = data.get('customer_id')
-#         email = data.get('email')
-#         mobile_no = data.get('mobile_no')
-#         first_name = data.get('first_name')
-#         last_name = data.get('last_name')
-
-#         if not customer_id:
-#             return JsonResponse({"error": "Customer ID is required."}, status=400)
-
-#         try:
-#             customer = CustomerRegister.objects.get(id=customer_id)
-#         except CustomerRegister.DoesNotExist:
-#             return JsonResponse({"error": "Customer not found."}, status=404)
-
-#         if customer.register_status != 1:
-#             return JsonResponse({"error": "First phase registration incomplete."}, status=400)
-
-#         otp = generate_otp()
-#         otp_sent = False
-#         otp_send_type = None
-#         if not customer.mobile_no and mobile_no:
-#             if CustomerRegister.objects.filter(mobile_no=mobile_no).exclude(id=customer.id).exists():
-#                 return JsonResponse({"error": "Mobile number already in use."}, status=400)
-#             customer.mobile_no = mobile_no
-#             send_otp_sms([mobile_no], f"Hi, This is your OTP for profile verification on Pavaman Aviation: {otp}. Valid for 2 minutes.")
-#             otp_sent = True
-#             otp_send_type = 'Mobile'
-#         if not customer.email and email:
-#             if CustomerRegister.objects.filter(email=email).exclude(id=customer.id).exists():
-#                 return JsonResponse({"error": "Email already in use."}, status=400)
-#             customer.email = email
-#             send_otp_email(email, first_name or customer.first_name, otp)
-#             otp_sent = True
-#             otp_send_type = 'Email'
-#         if first_name:
-#             customer.first_name = first_name
-#         if last_name:
-#             customer.last_name = last_name
-
-#         if not otp_sent:
-#             return JsonResponse({"error": "No new field to verify (mobile/email) or already provided."}, status=400)
-
-#         customer.otp = otp
-#         customer.save(update_fields=['otp_send_type','mobile_no','email','first_name', 'last_name', 'otp'])
-
-#         return JsonResponse({
-#             "message": "OTP sent. Please verify to complete your profile.",
-#             "customer_id": customer.id
-#         }, status=200)
-
-#     except json.JSONDecodeError:
-#         return JsonResponse({"error": "Invalid JSON."}, status=400)
-#     except Exception as e:
-#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
 def send_otp_email(email, first_name, otp):
     subject = "[Pavaman] Please Verify Your Email"
@@ -572,69 +446,6 @@ def send_otp_email(email, first_name, otp):
     )
     email_message.attach_alternative(html_content, "text/html")
     email_message.send()
-
-# @csrf_exempt
-# def customer_login_request_otp(request):
-#     if request.method != 'POST':
-#         return JsonResponse({"error": "Only POST allowed."}, status=405)
-
-#     try:
-#         data = json.loads(request.body)
-#         email = data.get('email')
-#         mobile_no = data.get('mobile_no')
-#         token = data.get('token')  # Google token, if present
-
-#         first_name = ''
-#         last_name = ''
-
-#         # If Google token provided, verify and extract email
-#         if token:
-#             google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
-#             response = requests.get(google_url)
-#             if response.status_code != 200:
-#                 return JsonResponse({"error": "Google token invalid."}, status=400)
-
-#             google_data = response.json()
-#             if "error" in google_data:
-#                 return JsonResponse({"error": "Invalid Google token."}, status=400)
-
-#             # email = google_data.get("email")
-#             # first_name = google_data.get("given_name", "")
-#             # last_name = google_data.get("family_name", "")
-
-#         if not email and not mobile_no:
-#             return JsonResponse({"error": "Provide email or mobile number or valid Google token."}, status=400)
-
-#         # Lookup the customer with account_status = 1
-#         customer = None
-#         if email:
-#             customer = CustomerRegister.objects.filter(email=email, account_status=1).first()
-#         if not customer and mobile_no:
-#             customer = CustomerRegister.objects.filter(mobile_no=mobile_no, account_status=1).first()
-
-#         if not customer:
-#             return JsonResponse({"error": "Account not found or not verified."}, status=404)
-
-#         otp = generate_otp()
-#         customer.otp = otp
-#         customer.changed_on = timezone.now()
-#         customer.save(update_fields=['otp', 'changed_on'])
-
-#         if email:
-#             send_otp_email(email, customer.first_name or first_name, otp)
-#         if mobile_no:
-#             send_otp_sms([mobile_no], f"Hi,This is your OTP for login to Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it with anyone.")
-
-#         return JsonResponse({
-#             "message": "OTP sent for login.",
-#             "customer_id": customer.id,
-#             "status_code": 200
-#         }, status=200)
-
-#     except json.JSONDecodeError:
-#         return JsonResponse({"error": "Invalid JSON."}, status=400)
-#     except Exception as e:
-#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 @csrf_exempt
 def customer_login(request):
     if request.method != 'POST':
@@ -671,7 +482,9 @@ def customer_login(request):
             if not customer:
                 return JsonResponse({"error": "Account not found or not verified."}, status=404)
 
-            request.session['customer_id'] = customer.id  # ✅ Set session
+            request.session['customer_id'] = customer.id  # Set session
+            request.session.modified = True
+            request.session.save()
 
             return JsonResponse({
                 "message": "Login successful via Google.",
@@ -718,15 +531,149 @@ def customer_login(request):
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+@csrf_exempt
+def customer_profile_view(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST allowed."}, status=405)
 
-import uuid
-import time
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-import json
-from .idfy_verification import send_pan_verification_request, get_pan_verification_result
-from .models import KYCDetails, CustomerRegister
-from django.shortcuts import get_object_or_404
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+
+        session_customer_id = request.session.get('customer_id')
+
+        if not customer_id or not session_customer_id or customer_id != session_customer_id:
+            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+        customer = CustomerRegister.objects.filter(id=customer_id).first()
+        if not customer:
+            return JsonResponse({"error": "Customer not found."}, status=404)
+        
+        more_details = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+        response_data = {
+            "customer_id": customer.id,
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "email": customer.email,
+            "mobile_no": customer.mobile_no,
+            "register_status": customer.register_status,
+            "account_status": customer.account_status,
+        }
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON."}, status=400)   
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+def get_location_by_pincode(pincode):
+    try:
+        url = f"https://api.postalpincode.in/pincode/{pincode}"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if data[0]['Status'] == 'Success':
+                post_office = data[0]['PostOffice'][0]
+                return {
+                    "district": post_office.get("District"),
+                    "state": post_office.get("State"),
+                    "country": post_office.get("Country"),
+                    "city": post_office.get("Name")
+                }
+    except:
+        pass
+    return {}
+    
+
+@csrf_exempt
+def customer_more_details(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST allowed."}, status=405)
+    
+    try:
+        # customer_id = request.session.get('customer_id')
+        # if not customer_id:
+        #     return JsonResponse({"error": "No customer in session."}, status=401)
+
+        
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+
+        session_customer_id = request.session.get('customer_id')
+
+        if not customer_id or not session_customer_id or customer_id != session_customer_id:
+            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+        customer = CustomerRegister.objects.filter(id=customer_id).first()
+        if not customer:
+            return JsonResponse({"error": "Customer not found."}, status=404)
+        mobile_no = data.get('mobile_no')
+        email = data.get('email')
+        dob_str = data.get('dob')
+        gender = data.get('gender')
+        address = data.get('address') #keep flat no,street,area,landmark
+        pincode = data.get('pincode')
+        mandal = data.get('mandal', '')
+        designation = data.get('designation')
+        profession = data.get('profession')
+
+        if not (mobile_no and email):
+            return JsonResponse({"error": "Mobile no, and email are required."}, status=400)
+
+        dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
+        more = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+        if more and more.personal_status == 1:
+            return JsonResponse({"error": "Personal details already submitted. Please proceed to next step."}, status=400)
+
+        # Get location details
+        location = get_location_by_pincode(pincode)
+
+        if not more:
+            more = CustomerMoreDetails.objects.create(
+                customer=customer,
+                dob=dob,
+                gender=gender,
+                address=address,
+                pincode=pincode,
+                designation=designation,
+                profession=profession,
+                district = location.get("district", ""),
+                state = location.get("state", ""),
+                country = location.get("country", ""),
+                city = location.get("city", ""),
+                mandal = mandal,
+                personal_status=1
+            )
+
+        customer_details = {
+            "customer_id": customer.id,
+            "first_name": customer.first_name,
+            "last_name": customer.last_name,
+            "email": customer.email,
+            "mobile_no": customer.mobile_no,
+            "register_status": customer.register_status,
+            "account_status": customer.account_status,
+            "dob": more.dob,
+            "gender": more.gender,
+            "address": more.address,
+            "pincode": more.pincode,
+            "designation": more.designation,
+            "profession": more.profession,
+            "district": location.get("district"),
+            "state": location.get("state"),
+            "country": location.get("country"),
+            "city": location.get("city"),
+            "mandal": more.mandal,
+            "personal_status": more.personal_status,
+        }
+
+        return JsonResponse({
+            "message": "Customer details updated successfully.",
+            "customer_details": customer_details,
+        }, status=200)
+
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON."}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
 @csrf_exempt
 def pan_verification_request_view(request):
@@ -735,7 +682,7 @@ def pan_verification_request_view(request):
 
     data = json.loads(request.body)
     pan_number = data.get('pan_number')
-    customer_id = data.get('customer_id')  # Ensure frontend sends this
+    customer_id = data.get('customer_id')
 
     if not all([pan_number, customer_id]):
         return JsonResponse({"error": "Missing required fields"}, status=400)
@@ -750,7 +697,7 @@ def pan_verification_request_view(request):
         # status_value = 1 if response.get("message") == "PAN verification initiated." else 0
 
         # Manually assign pan_status = 1 when request_id is received
-        KYCDetails.objects.update_or_create(
+        kyc,create=KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
                 "pan_number": pan_number,
@@ -764,7 +711,8 @@ def pan_verification_request_view(request):
         return JsonResponse({
             "message": "PAN verification initiated.",
             "request_id": response["request_id"],
-            "task_id": task_id
+            "task_id": task_id,
+            "pan_status": kyc.pan_status
         })
         
     else:
@@ -803,57 +751,106 @@ def pan_verification_result_view(request):
 
     return JsonResponse(result, safe=False)
 
+@csrf_exempt
+def aadhar_lite_verification_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        aadhar_number = data.get("aadhar_number")
+        customer_id = data.get("customer_id")
 
-# @csrf_exempt
-# def pan_verification_request_view(request):
-#     if request.method != 'POST':
-#         return JsonResponse({"error": "Only POST allowed."}, status=405)
+        if not aadhar_number or not customer_id:
+            return JsonResponse({'error': 'aadhar_number and customer_id required'}, status=400)
+        
+        # Step 1: Call IDfy for verification
+        task_id = str(uuid.uuid4())
+        result = verify_aadhar_sync(aadhar_number, task_id)
 
-#     data = json.loads(request.body)
-#     pan_number = data.get('pan_number')
-#     # full_name = data.get('full_name')
-#     # dob = data.get('dob')
+        # Step 2: Extract aadhar status
+        idfy_aadhar_status = result.get("status", None)
+        aadhar_status = 1 if idfy_aadhar_status == "completed" else 0
+        # idfy_aadhar_status = result.get("result", {}).get("source_output", {}).get("status", None)
 
-#     if not all([pan_number]):
-#         return JsonResponse({"error": "Missing required fields"}, status=400)
+        # idfy_aadhar_status = result.get("result", {}).get("output", {}).get("status") or "unknown"
+        # idfy_aadhar_status = result.get("result", {}).get("output", {}).get("status", None)
 
-#     task_id = str(uuid.uuid4())
-#     response = send_pan_verification_request(pan_number, task_id)
-
-#     if 'request_id' in response:
-#         return JsonResponse({
-#             "message": "PAN verification initiated.",
-#             "request_id": response["request_id"],
-#             "task_id": task_id
-#         })
-
-#     else:
-#         return JsonResponse({"error": response}, status=500)
-
-
-# @csrf_exempt
-# def pan_verification_result_view(request):
-#     if request.method != 'POST':
-#         return JsonResponse({"error": "Only POST allowed."}, status=405)
-
-#     data = json.loads(request.body)
-#     request_id = data.get('request_id')
-
-#     if not request_id:
-#         return JsonResponse({"error": "Missing request_id"}, status=400)
-
-#     result = get_pan_verification_result(request_id)
-#     return JsonResponse(result, safe=False)
-
-
-import requests
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-
-# IDFY_API_KEY = settings.IDFY_TEST_API_KEY  # Replace with your actual key
-# IDFY_RESULT_URL = 'https://eve.idfy.com/v3/tasks?request_id={request_id}'
+        # Step 3: Save to DB
+        customer = get_object_or_404(CustomerRegister, id=customer_id)
+        KYCDetails.objects.update_or_create(
+            customer=customer,
+            defaults={
+                "aadhar_number": aadhar_number,
+                "aadhar_status":aadhar_status,
+                "idfy_aadhar_status": idfy_aadhar_status,  # You should have this field in your model
+                "aadhar_task_id": task_id
+            }
+        )
+        # Step 4: Return custom response instead of full result
+        return JsonResponse({
+            "message": "Aadhaar verification completed successfully.",
+            "aadhar_status": aadhar_status,
+            "idfy_aadhar_status": idfy_aadhar_status,
+            "task_id": task_id
+        })
+        # return JsonResponse(result, safe=False)
+    
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 
 
+@csrf_exempt
+def bank_account_verification_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        account_number = data.get("account_number")
+        ifsc = data.get("ifsc")
+        customer_id = data.get("customer_id")
+
+        if not account_number or not ifsc or not customer_id:
+            return JsonResponse({'error': 'account_number, ifsc, and customer_id required'}, status=400)
+
+        # Call IDfy
+        task_id, result = verify_bank_account_sync(account_number, ifsc)
+
+        # Extract status
+        idfy_status = result.get("status", "")
+        source_output = result.get("result", {}).get("source_output", {})
+        verified = source_output.get("verified", False)
+        bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
+
+        # Decide status
+        bank_status = 1 if verified and idfy_status == "completed" else 2 if idfy_status == "completed" else 0
+
+        # Save to DB
+        customer = get_object_or_404(CustomerRegister, id=customer_id)
+        KYCDetails.objects.update_or_create(
+            customer=customer,
+            defaults={
+                "banck_account_number": account_number,
+                "ifsc_code": ifsc,
+                "banck_name": bank_name,
+                "banck_task_id": task_id,
+                "idfy_bank_status": idfy_status,
+                "bank_status": bank_status
+            }
+        )
+
+        return JsonResponse({
+            "message": "Bank verification completed",
+            "verified": verified,
+            "bank_status": bank_status,
+            "idfy_bank_status": idfy_status,
+            "task_id": task_id,
+            "raw_response": result 
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
 @csrf_exempt
 def fetch_pan_verification_result(request):
     if request.method != 'GET':

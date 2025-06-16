@@ -674,7 +674,6 @@ def customer_more_details(request):
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
-
 @csrf_exempt
 def pan_verification_request_view(request):
     if request.method != 'POST':
@@ -686,37 +685,41 @@ def pan_verification_request_view(request):
 
     if not all([pan_number, customer_id]):
         return JsonResponse({"error": "Missing required fields"}, status=400)
+    kyc = KYCDetails.objects.filter(customer__id=customer_id).first()
+    if kyc and kyc.pan_status == 1:
+        return JsonResponse({"error": "PAN verification already completed.Please proceed for next"}, status=400)
+    
+    customer = get_object_or_404(CustomerRegister, id=customer_id)
+    full_name = f"{customer.first_name} {customer.last_name}".strip()
+    more= CustomerMoreDetails.objects.filter(customer=customer).first()
+    dob = more.dob.strftime("%Y-%m-%d") if more and more.dob else None
 
+    if not dob:
+        return JsonResponse({"error": "DOB is required for PAN verification."}, status=400)
     task_id = str(uuid.uuid4())
-    response = send_pan_verification_request(pan_number, task_id)
+    response_data = send_pan_verification_request(pan_number,full_name,dob, task_id)
 
     if 'request_id' in response:
-        customer = get_object_or_404(CustomerRegister, id=customer_id)
-        
-        # Only set pan_status = 1 if message is as expected
-        # status_value = 1 if response.get("message") == "PAN verification initiated." else 0
-
-        # Manually assign pan_status = 1 when request_id is received
-        kyc,create=KYCDetails.objects.update_or_create(
+        kyc, _ = KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
                 "pan_number": pan_number,
                 "pan_request_id": response["request_id"],
                 "pan_group_id": settings.IDFY_TEST_GROUP_ID,
                 "pan_task_id": task_id,
-                "pan_status": 1  # Always set to 1 when request_id is present
+                "pan_status": 1  # Request initiated
             }
         )
 
         return JsonResponse({
             "message": "PAN verification initiated.",
-            "request_id": response["request_id"],
+            "request_id": response_data["request_id"],
             "task_id": task_id,
-            "pan_status": kyc.pan_status
+            "pan_status": kyc.pan_status,
+            "raw_response": response_data
         })
-        
-    else:
-        return JsonResponse({"error": response}, status=500)
+
+    return JsonResponse({"error": response}, status=500)
 
 @csrf_exempt
 def pan_verification_result_view(request):
@@ -734,23 +737,25 @@ def pan_verification_result_view(request):
     
     try:
         kyc = KYCDetails.objects.get(pan_request_id=request_id)
+
         if result.get("status") == "completed":
-            output = result.get("result", {}).get("output", {})
-            kyc.idfy_pan_status = output.get("status")
-            # kyc.pan_status = 1 if output.get("status") == "match" else 2  # 1: Approved, 2: Rejected
-            kyc.pan_name = output.get("full_name")
-            kyc.pan_dob = output.get("dob")
+            output = result.get("result", {}).get("source_output", {})
+            
+            # Update KYC fields properly
+            kyc.idfy_pan_status = result.get("status")  # e.g. "id_found"
+            kyc.pan_status = 1 if result.get("status") == "completed" else 0  # 1: Verified, 2: Rejected
+            # kyc.pan_name = output.get("input_details", {}).get("input_name")
+            # kyc.pan_dob = output.get("input_details", {}).get("input_dob")
             kyc.save()
 
         pan_status = kyc.pan_status
     except KYCDetails.DoesNotExist:
-        pass  # Handle if needed # Leave pan_status as None
+        return JsonResponse({"error": "KYC entry not found for this request_id"}, status=404)
 
-    # Append pan_status to result
+    # Return enriched response
     result["pan_status"] = pan_status
-
+    result["message"] = "PAN verification completed successfully.Pl"
     return JsonResponse(result, safe=False)
-
 @csrf_exempt
 def aadhar_lite_verification_view(request):
     if request.method != 'POST':
@@ -764,6 +769,9 @@ def aadhar_lite_verification_view(request):
         if not aadhar_number or not customer_id:
             return JsonResponse({'error': 'aadhar_number and customer_id required'}, status=400)
         
+        kyc= KYCDetails.objects.filter(customer_id=customer_id).first()
+        if kyc and kyc.aadhar_status == 1:
+            return JsonResponse({"error": "Aadhaar details already submitted. Please proceed to next step."}, status=400)
         # Step 1: Call IDfy for verification
         task_id = str(uuid.uuid4())
         result = verify_aadhar_sync(aadhar_number, task_id)
@@ -792,13 +800,13 @@ def aadhar_lite_verification_view(request):
             "message": "Aadhaar verification completed successfully.",
             "aadhar_status": aadhar_status,
             "idfy_aadhar_status": idfy_aadhar_status,
-            "task_id": task_id
+            "task_id": task_id,
+            "result": result
         })
         # return JsonResponse(result, safe=False)
     
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-
 
 @csrf_exempt
 def bank_account_verification_view(request):
@@ -814,67 +822,45 @@ def bank_account_verification_view(request):
         if not account_number or not ifsc or not customer_id:
             return JsonResponse({'error': 'account_number, ifsc, and customer_id required'}, status=400)
 
-        # Call IDfy
+        # Call IDfy sync verification
         task_id, result = verify_bank_account_sync(account_number, ifsc)
 
-        # Extract status
-        idfy_status = result.get("status", "")
+        # Extract verification result
+        idfy_bank_status = result.get("status", "")
         source_output = result.get("result", {}).get("source_output", {})
         verified = source_output.get("verified", False)
         bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
 
-        # Decide status
-        bank_status = 1 if verified and idfy_status == "completed" else 2 if idfy_status == "completed" else 0
+        # Determine status: 1 = verified, 2 = failed, 0 = pending
+        bank_status = 1 if idfy_bank_status == "completed" else 0
+        kyc= KYCDetails.objects.filter(customer_id=customer_id).first()
+        if not kyc:
+            return JsonResponse({"error": "KYC details not found for the customer."}, status=404)
+        if kyc.bank_status == 1:
+            return JsonResponse({"error": "Bank details already submitted. Please proceed to next step."}, status=400)
 
-        # Save to DB
+        # Update or create KYC details
         customer = get_object_or_404(CustomerRegister, id=customer_id)
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
                 "banck_account_number": account_number,
                 "ifsc_code": ifsc,
-                "banck_name": bank_name,
-                "banck_task_id": task_id,
-                "idfy_bank_status": idfy_status,
+                "bank_name": bank_name,
+                "bank_task_id": task_id,
+                "idfy_bank_status": idfy_bank_status,
                 "bank_status": bank_status
             }
         )
-
         return JsonResponse({
             "message": "Bank verification completed",
             "verified": verified,
             "bank_status": bank_status,
-            "idfy_bank_status": idfy_status,
+            "idfy_bank_status": idfy_bank_status,
             "task_id": task_id,
-            "raw_response": result 
+            "raw_response": result
         })
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-@csrf_exempt
-def fetch_pan_verification_result(request):
-    if request.method != 'GET':
-        return JsonResponse({'error': 'Only GET requests are allowed.'}, status=405)
-
-    request_id = request.GET.get('request_id')
-    if not request_id:
-        return JsonResponse({'error': 'request_id is required.'}, status=400)
-
-    url = settings.IDFY_RESULT_URL.format(request_id=request_id)
-    headers = {
-        'Authorization': f'Bearer {settings.IDFY_TEST_API_KEY}',
-        'Content-Type': 'application/json'
-    }
-
-    try:
-        response = requests.get(url, headers=headers)
-        data = response.json()
-
-        if response.status_code == 200:
-            return JsonResponse({'status': 'success', 'data': data}, status=200)
-        else:
-            return JsonResponse({'status': 'error', 'message': data}, status=response.status_code)
-
-    except requests.RequestException as e:
-        return JsonResponse({'error': f'Request failed: {str(e)}'}, status=500)
 

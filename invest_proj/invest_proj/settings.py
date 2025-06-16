@@ -224,3 +224,12 @@ AWS_S3_BUCKET_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.
 
 # FRONTEND_URL = os.getenv("FRONTEND_URL")
 # RAZORPAY_CALLBACK_URL = os.getenv("RAZORPAY_CALLBACK_URL")
+import os
+IDFY_TEST_API_KEY = os.getenv("IDFY_TEST_API_KEY")
+IDFY_TEST_ACCOUNT_ID = os.getenv("IDFY_TEST_ACCOUNT_ID")
+IDFY_TEST_GROUP_ID = os.getenv("IDFY_TEST_GROUP_ID")
+
+IDFY_BANK_VERIFY_URL = os.getenv("IDFY_BANK_VERIFY_URL", "https://eve.idfy.com/v3/tasks/sync/verify_with_source/bank_account")
+IDFY_AADHAR_VERIFY_URL = os.getenv("IDFY_AADHAR_VERIFY_URL", "https://eve.idfy.com/v3/tasks/sync/verify_with_source/aadhaar_lite")
+IDFY_PAN_VERIFY_URL = os.getenv("IDFY_PAN_VERIFY_URL", "https://eve.idfy.com/v3/tasks/sync/verify_with_source/pan")
+IDFY_RESULT_URL = "https://eve.idfy.com/v3/tasks?request_id={request_id}"

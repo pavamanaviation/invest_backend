@@ -534,6 +534,8 @@ def customer_login(request):
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+import json
+
 @csrf_exempt
 def customer_profile_view(request):
     if request.method != 'POST':
@@ -548,6 +550,21 @@ def customer_profile_view(request):
         if not customer:
             return JsonResponse({"error": "Customer not found."}, status=404)
 
+        if request.content_type == 'application/json':
+            data = json.loads(request.body)
+        else:
+            data = request.POST
+
+        action = str(data.get('action', 'view')).lower()
+
+        if action == 'save_kyc_accept_status' and str(data.get('kyc_accept_status')) == '1':
+            customer.kyc_accept_status = 1
+            customer.save(update_fields=['kyc_accept_status'])
+
+        if action == 'save_payment_accept_status' and str(data.get('payment_accept_status')) == '1':
+            customer.payment_accept_status = 1
+            customer.save(update_fields=['payment_accept_status'])
+
         return JsonResponse({
             "customer_id": customer.id,
             "first_name": customer.first_name,
@@ -556,6 +573,7 @@ def customer_profile_view(request):
             "mobile_no": customer.mobile_no,
             "register_status": customer.register_status,
             "account_status": customer.account_status,
+            "kyc_accept_status": customer.kyc_accept_status,
         }, status=200)
 
     except Exception as e:

@@ -7,7 +7,7 @@ class Admin(models.Model):
     email = models.EmailField(max_length=50, unique=True)
     mobile_no = models.CharField(max_length=15, unique=True)
     otp = models.IntegerField(null=True, blank=True)
-    password = models.CharField(max_length=50)
+    password = models.CharField(max_length=255)  # change from 50 to 255
     # company_name = models.CharField(max_length=50)
     status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
     def __str__(self):
@@ -45,6 +45,7 @@ class CustomerRegister(models.Model):
     account_status = models.IntegerField(default=0)
     
     kyc_accept_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
+    payment_accept_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
     status = models.IntegerField(default=1)
     def is_otp_valid(self):
         """Check if OTP is still valid (within 2 minutes)."""

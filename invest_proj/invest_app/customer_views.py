@@ -20,7 +20,7 @@ from django.shortcuts import get_object_or_404
 
 import boto3
 
-from .models import CustomerRegister, KYCDetails, CustomerMoreDetails, NoomineeDetails
+from .models import CustomerRegister, KYCDetails, CustomerMoreDetails, NomineeDetails
 from .sms_utils import send_otp_sms
 from .idfy_verification import (
     send_pan_verification_request,
@@ -980,7 +980,7 @@ def nominee_details(request):
                 id_proof_path_s3_url=upload_file_to_s3(id_proof_file, s3_key)
                 id_proof_path = s3_key
 
-            nominee, created = NoomineeDetails.objects.update_or_create(
+            nominee, created = NomineeDetails.objects.update_or_create(
                 customer=customer,
                 defaults={
                     "first_name": first_name,

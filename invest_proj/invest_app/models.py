@@ -2,16 +2,16 @@ from django.db import models
 from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 from datetime import timedelta
-# class Admin(models.Model):
-#     name = models.CharField(max_length=50)
-#     email = models.EmailField(max_length=50, unique=True)
-#     mobile_no = models.CharField(max_length=15, unique=True)
-#     otp = models.IntegerField(null=True, blank=True)
-#     password = models.CharField(max_length=50)
-#     # company_name = models.CharField(max_length=50)
-#     status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
-#     def __str__(self):
-#         return self.name
+class Admin(models.Model):
+    name = models.CharField(max_length=50)
+    email = models.EmailField(max_length=50, unique=True)
+    mobile_no = models.CharField(max_length=15, unique=True)
+    otp = models.IntegerField(null=True, blank=True)
+    password = models.CharField(max_length=50)
+    # company_name = models.CharField(max_length=50)
+    status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
+    def __str__(self):
+        return self.name
 
 # class Role(models.Model):
 #     name = models.CharField(max_length=50)
@@ -29,6 +29,7 @@ from datetime import timedelta
 #     def __str__(self):
 #         return f"{self.name} ({self.role_type})"
 class CustomerRegister(models.Model):
+    admin= models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     email = models.EmailField(max_length=50,unique=True,null=True, blank=True)
@@ -58,12 +59,12 @@ class CustomerRegister(models.Model):
             self.otp = None
             self.changed_on = None
             self.save()
-    # admin = models.ForeignKey('Admin', null=True, blank=True, on_delete=models.SET_NULL)
 
     def __str__(self):
         return self.email
 class KYCDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)    
     pan_number = models.CharField(max_length=10, unique=True, null=True, blank=True)
     pan_request_id = models.CharField(max_length=100, null=True, blank=True)
     pan_group_id = models.CharField(max_length=100, null=True, blank=True)
@@ -94,6 +95,7 @@ class KYCDetails(models.Model):
         return f"KYC for {self.customer.email}" if self.customer else "KYC Details"
 class CustomerMoreDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
     # customer_kyc = models.ForeignKey(KYCDetails, on_delete=models.CASCADE, null=True, blank=True)
 
     address = models.TextField(null=True, blank=True)
@@ -110,11 +112,13 @@ class CustomerMoreDetails(models.Model):
     designation = models.CharField(max_length=50, null=True, blank=True)
     personal_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
     created_at = models.DateTimeField(auto_now_add=True)
+
     def __str__(self):
         return f"More Details for {self.customer.email}" if self.customer else "Customer More Details"
 
-class NoomineeDetails(models.Model):
+class NomineeDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)    
     first_name = models.CharField(max_length=100, null=True, blank=True)
     last_name = models.CharField(max_length=100, null=True, blank=True)
     relation = models.CharField(max_length=50, null=True, blank=True)

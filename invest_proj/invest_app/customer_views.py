@@ -231,14 +231,11 @@ def verify_customer_otp(request):
                 "message": "OTP verified and login successful.",
                 "customer_id": customer.id,
                 "email": customer.email,
-                "mobile_no": customer.mobile_no,
-                "first_name": customer.first_name,
-                "last_name": customer.last_name,
                 "register_status": customer.register_status,
                 "account_status": customer.account_status,
                 "session_id": request.session.session_key
             }, status=200)
-        return JsonResponse({
+        response_data = {
             "message": "OTP verified successfully.",
             "customer_id": customer.id,
             "email": customer.email,
@@ -247,7 +244,17 @@ def verify_customer_otp(request):
             "last_name": customer.last_name,
             "register_status": customer.register_status,
             "account_status": customer.account_status,
-        }, status=200)
+        }
+        # return JsonResponse({
+        #     "message": "OTP verified successfully.",
+        #     "customer_id": customer.id,
+        #     "email": customer.email,
+        #     "mobile_no": customer.mobile_no,
+        #     "first_name": customer.first_name,
+        #     "last_name": customer.last_name,
+        #     "register_status": customer.register_status,
+        #     "account_status": customer.account_status,
+        # }, status=200)
         # If both phases are completed, suggest login
         if customer.register_status == 1 and customer.account_status == 1:
             response_data["next_step"] = "login"
@@ -542,8 +549,13 @@ def customer_profile_view(request):
         return JsonResponse({"error": "Only POST allowed."}, status=405)
 
     try:
+        
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+
         session_customer_id = request.session.get('customer_id')
-        if not session_customer_id:
+        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+        # if not session_customer_id:
             return JsonResponse({"error": "Unauthorized: Login required."}, status=403)
 
         customer = CustomerRegister.objects.filter(id=session_customer_id).first()
@@ -591,7 +603,8 @@ def get_location_by_pincode(pincode):
                     "district": post_office.get("District"),
                     "state": post_office.get("State"),
                     "country": post_office.get("Country"),
-                    "city": post_office.get("Name")
+                    "city": post_office.get("Name"),
+                    "block": post_office.get("Block", ""),
                 }
     except:
         pass
@@ -613,8 +626,8 @@ def customer_more_details(request):
         customer_id = data.get('customer_id')
 
         session_customer_id = request.session.get('customer_id')
-
-        if not customer_id or not session_customer_id or customer_id != session_customer_id:
+        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+        # if not customer_id or not session_customer_id or customer_id != session_customer_id:
             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
         customer = CustomerRegister.objects.filter(id=customer_id).first()
         if not customer:
@@ -625,7 +638,7 @@ def customer_more_details(request):
         gender = data.get('gender')
         address = data.get('address') #keep flat no,street,area,landmark
         pincode = data.get('pincode')
-        mandal = data.get('mandal', '')
+        # mandal = data.get('mandal', '')
         designation = data.get('designation')
         profession = data.get('profession')
 
@@ -654,7 +667,7 @@ def customer_more_details(request):
                 state = location.get("state", ""),
                 country = location.get("country", ""),
                 city = location.get("city", ""),
-                mandal = mandal,
+                mandal = location.get("block", ""),
                 personal_status=1
             )
 
@@ -693,8 +706,14 @@ def customer_more_details(request):
 def pan_verification_request_view(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST allowed."}, status=405)
-
+    
     data = json.loads(request.body)
+    customer_id = data.get('customer_id')
+
+    session_customer_id = request.session.get('customer_id')
+    if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+        # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
     pan_number = data.get('pan_number')
     customer_id = data.get('customer_id')
 
@@ -778,6 +797,12 @@ def aadhar_lite_verification_view(request):
     
     try:
         data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+
+        session_customer_id = request.session.get('customer_id')
+        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+            # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+                return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
         aadhar_number = data.get("aadhar_number")
         customer_id = data.get("customer_id")
 
@@ -830,6 +855,12 @@ def bank_account_verification_view(request):
 
     try:
         data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+
+        session_customer_id = request.session.get('customer_id')
+        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+            # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+                return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
         account_number = data.get("account_number")
         ifsc = data.get("ifsc")
         customer_id = data.get("customer_id")
@@ -883,8 +914,14 @@ def bank_account_verification_view(request):
 def upload_pdf_document(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Only POST allowed'}, status=405)
-
+    # data = json.loads(request.body)
     customer_id = request.POST.get('customer_id')
+
+    session_customer_id = request.session.get('customer_id')
+    if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+        # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+    
     doc_type = request.POST.get('doc_type')  # 'aadhar' or 'pan'
     file = request.FILES.get('kyc_file')
 
@@ -945,9 +982,16 @@ def upload_file_to_s3(file_obj, s3_key):
 def nominee_details(request):
     if request.method == "POST":
         try:            
-            customer_id = request.session.get('customer_id')  # Use session
-            if not customer_id:
-                return JsonResponse({"error": "Customer not logged in."}, status=401)
+            # data = json.loads(request.body)
+            customer_id = request.POST.get('customer_id')
+
+            session_customer_id = request.session.get('customer_id')
+            if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+                    return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+    
+            # customer_id = request.session.get('customer_id')  # Use session
+            # if not customer_id:
+            #     return JsonResponse({"error": "Customer not logged in."}, status=401)
 
             first_name = request.POST.get('first_name')
             last_name = request.POST.get('last_name')

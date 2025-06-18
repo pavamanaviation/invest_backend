@@ -901,7 +901,7 @@ def upload_pdf_document(request):
             kyc.pan_path = s3_filename 
 
         kyc.save()
-        return JsonResponse({"message": "Document uploaded successfully", "pdf_url": s3_url})
+        return JsonResponse({"status":"sucess","message": "Document uploaded successfully", "pdf_url": s3_url})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
@@ -919,7 +919,6 @@ def upload_file_to_s3(file_obj, s3_key):
         s3_key,
         ExtraArgs={
             'ContentType': file_obj.content_type,
-            # 'ACL': 'public-read'  # Optional: Make file publicly viewable
         }
     )
     return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
@@ -963,7 +962,7 @@ def nominee_details(request):
                 if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
                     return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for address proof.'}, status=400)
 
-                s3_key = f"{folder_name}/address_proof_{nominee_name}{file_ext}"
+                s3_key = f"{folder_name}/nominee_address_proof_{nominee_name}{file_ext}"
                 address_proof_path_s3_url= upload_file_to_s3(address_proof_file, s3_key)
                 address_proof_path=s3_key
 
@@ -977,7 +976,7 @@ def nominee_details(request):
                 if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
                     return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for ID proof.'}, status=400)
 
-                s3_key = f"{folder_name}/id_proof_{nominee_name}{file_ext}"
+                s3_key = f"{folder_name}/nominee_id_proof_{nominee_name}{file_ext}"
                 id_proof_path_s3_url=upload_file_to_s3(id_proof_file, s3_key)
                 id_proof_path = s3_key
 

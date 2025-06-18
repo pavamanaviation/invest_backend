@@ -888,9 +888,9 @@ def upload_pdf_document(request):
 
     customer = get_object_or_404(CustomerRegister, id=customer_id)
     kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
-    # customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_")
-    customer_folder = f"{customer_id}_{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
-    s3_filename = f"{customer_folder}/{doc_type}{file_ext}"  # e.g., 1234_kapil_dev/aadhar.pdf or pan.jpg
+    customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
+    customer_folder = f"{customer_id}_{customer_name}".lower()
+    s3_filename = f"{customer_folder}/{doc_type}_{customer_name}{file_ext}"  # e.g., 1234_kapil_dev/aadhar.pdf or pan.jpg
 
     try:
         s3_url = upload_file_to_s3(file, s3_filename)
@@ -899,7 +899,6 @@ def upload_pdf_document(request):
             kyc.aadhar_path = s3_filename 
         else:
             kyc.pan_path = s3_filename 
-
 
         kyc.save()
         return JsonResponse({"message": "Document uploaded successfully", "pdf_url": s3_url})
@@ -971,7 +970,7 @@ def nominee_details(request):
             # Upload ID proof
             if id_proof_file:
                 file_name = id_proof_file.name
-                file_root, file_ext = os.path.splitext(file_name)  # ✅ no [1]
+                file_root, file_ext = os.path.splitext(file_name)
                 file_ext = file_ext.lower()
                 mime_type, _ = mimetypes.guess_type(file_name)
 

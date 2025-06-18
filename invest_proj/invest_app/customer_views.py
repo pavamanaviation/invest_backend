@@ -890,7 +890,7 @@ def upload_pdf_document(request):
     kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
     # customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_")
     customer_folder = f"{customer_id}_{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
-    s3_filename = f"{customer_folder}/{doc_type}.pdf"  # e.g., 1234_john_doe/aadhar.pdf
+    s3_filename = f"{customer_folder}/{doc_type}{file_ext}"  # e.g., 1234_kapil_dev/aadhar.pdf or pan.jpg
 
     try:
         s3_url = upload_file_to_s3(file, s3_filename)
@@ -902,7 +902,7 @@ def upload_pdf_document(request):
 
 
         kyc.save()
-        return JsonResponse({"message": "PDF uploaded successfully", "pdf_url": s3_url})
+        return JsonResponse({"message": "Document uploaded successfully", "pdf_url": s3_url})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
@@ -914,8 +914,15 @@ def upload_file_to_s3(file_obj, s3_key):
         region_name=settings.AWS_S3_REGION_NAME,
     )
 
-    s3.upload_fileobj(file_obj, settings.AWS_STORAGE_BUCKET_NAME, s3_key,)
-
+    s3.upload_fileobj(
+        file_obj,
+        settings.AWS_STORAGE_BUCKET_NAME,
+        s3_key,
+        ExtraArgs={
+            'ContentType': file_obj.content_type,
+            # 'ACL': 'public-read'  # Optional: Make file publicly viewable
+        }
+    )
     return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
 
 @csrf_exempt
@@ -939,32 +946,43 @@ def nominee_details(request):
 
             if not all([customer_id, first_name, last_name, relation, dob, address_proof, id_proof]):
                 return JsonResponse({"error": "All fields are required."}, status=400)
+            # Allowed formats
+            allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
+            allowed_mime_types = ['application/pdf', 'image/jpeg', 'image/png']
 
             customer = get_object_or_404(CustomerRegister, id=customer_id)
-            customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_")
             nominee_name = f"{first_name}_{last_name}".replace(" ", "_")
-            
-            # Upload files to S3
+            customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
+            folder_name = f"{customer.id}_{customer_name}"
+             # Upload address proof
             if address_proof_file:
                 file_name = address_proof_file.name
+                file_root, file_ext = os.path.splitext(file_name)
+                file_ext = file_ext.lower()
                 mime_type, _ = mimetypes.guess_type(file_name)
-                if not file_name.lower().endswith('.pdf') or mime_type != 'application/pdf':
-                    return JsonResponse({'error': 'Only PDF files are allowed for address proof.'}, status=400)
 
-                s3_key = f"nominee-docs/{customer_id}_{customer_name}/address_proof_{nominee_name}.pdf"
-                address_proof_path = upload_file_to_s3(address_proof_file, s3_key)
+                if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
+                    return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for address proof.'}, status=400)
 
+                s3_key = f"{folder_name}/address_proof_{nominee_name}{file_ext}"
+                address_proof_path_s3_url= upload_file_to_s3(address_proof_file, s3_key)
+                address_proof_path=s3_key
+
+            # Upload ID proof
             if id_proof_file:
                 file_name = id_proof_file.name
+                file_root, file_ext = os.path.splitext(file_name)  # ✅ no [1]
+                file_ext = file_ext.lower()
                 mime_type, _ = mimetypes.guess_type(file_name)
-                if not file_name.lower().endswith('.pdf') or mime_type != 'application/pdf':
-                    return JsonResponse({'error': 'Only PDF files are allowed for ID proof.'}, status=400)
 
-                s3_key = f"nominee-docs/{customer_id}_{customer_name}/id_proof_{nominee_name}.pdf"
-                id_proof_path = upload_file_to_s3(id_proof_file, s3_key)
+                if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
+                    return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for ID proof.'}, status=400)
 
-            
-            nominee,created= NoomineeDetails.objects.update_or_create(
+                s3_key = f"{folder_name}/id_proof_{nominee_name}{file_ext}"
+                id_proof_path_s3_url=upload_file_to_s3(id_proof_file, s3_key)
+                id_proof_path = s3_key
+
+            nominee, created = NoomineeDetails.objects.update_or_create(
                 customer=customer,
                 defaults={
                     "first_name": first_name,
@@ -985,9 +1003,12 @@ def nominee_details(request):
                 "relation": nominee.relation,
                 "dob": nominee.dob.strftime("%Y-%m-%d") if nominee.dob else None,
                 "address_proof": nominee.address_proof,
-                "address_proof_path": nominee.address_proof_path,
+                "address_proof_path": address_proof_path_s3_url,
                 "id_proof": nominee.id_proof,
-                "id_proof_path": nominee.id_proof_path
+                "id_proof_path": id_proof_path_s3_url,
             }, status=200)
+
         except json.JSONDecodeError:
             return JsonResponse({"error": "Invalid JSON."}, status=400)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)

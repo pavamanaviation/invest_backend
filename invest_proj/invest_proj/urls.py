@@ -20,8 +20,8 @@ from django.urls import path
 # from invest_app.views import check_indian_time 
 from invest_app.customer_views import (customer_register,verify_customer_otp,customer_register_sec_phase,
 customer_login,pan_verification_request_view, pan_verification_result_view,
-aadhar_lite_verification_view,bank_account_verification_view,
-customer_more_details,customer_profile_view
+aadhar_lite_verification_view,bank_account_verification_view,customer_more_details,customer_profile_view,
+upload_pdf_document,nominee_details
 )
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -31,11 +31,10 @@ urlpatterns = [
     path('customer-login', customer_login, name='customer_login'),
     path('verify-pan', pan_verification_request_view, name='verify_pan'),
     path('verify-pan-result', pan_verification_result_view, name='verify_pan_result'),
-    # path('aadhar/request-otp/', aadhar_generate_otp_view, name='aadhar_generate_otp'),
-    # path('aadhar/submit-otp/', aadhar_verify_otp_view, name='aadhar_submit_otp'),
-    # path('aadhar/verify-result/', aadhar_verification_result_view, name='aadhar_verify_result'),
     path('verify-aadhar-lite', aadhar_lite_verification_view,name='aadhar_lite_verification'),
     path('verify-banck-account', bank_account_verification_view, name='bank_account_verification'),
     path('customer-more-details', customer_more_details, name='customer_more_details'),
     path('customer-profile', customer_profile_view, name='customer_profile'),
+    path('upload-pdf-document', upload_pdf_document, name='upload_pdf_document'),
+    path('nominee-details', nominee_details, name='nominee_details'),
 ]

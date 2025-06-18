@@ -44,11 +44,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'invest_app',
     'corsheaders',
-    # 'django.contrib.sessions',
 ]
 
 MIDDLEWARE = [
-    # 'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware', 
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -211,6 +209,8 @@ TWILIO_PHONE_NUMBER = config("TWILIO_PHONE_NUMBER")
 
 # RAZORPAY_KEY_ID = config("RAZORPAY_KEY_ID")
 # RAZORPAY_KEY_SECRET = config("RAZORPAY_KEY_SECRET")
+# FRONTEND_URL = os.getenv("FRONTEND_URL")
+# RAZORPAY_CALLBACK_URL = os.getenv("RAZORPAY_CALLBACK_URL")
 
 # SECURE_CROSS_ORIGIN_OPENER_POLICY = None
 
@@ -219,12 +219,9 @@ AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
 AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME")
-
 AWS_S3_BUCKET_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
 
-# FRONTEND_URL = os.getenv("FRONTEND_URL")
-# RAZORPAY_CALLBACK_URL = os.getenv("RAZORPAY_CALLBACK_URL")
-import os
+
 IDFY_TEST_API_KEY = os.getenv("IDFY_TEST_API_KEY")
 IDFY_TEST_ACCOUNT_ID = os.getenv("IDFY_TEST_ACCOUNT_ID")
 IDFY_TEST_GROUP_ID = os.getenv("IDFY_TEST_GROUP_ID")
@@ -233,3 +230,13 @@ IDFY_BANK_VERIFY_URL = os.getenv("IDFY_BANK_VERIFY_URL", "https://eve.idfy.com/v
 IDFY_AADHAR_VERIFY_URL = os.getenv("IDFY_AADHAR_VERIFY_URL", "https://eve.idfy.com/v3/tasks/sync/verify_with_source/aadhaar_lite")
 IDFY_PAN_VERIFY_URL = os.getenv("IDFY_PAN_VERIFY_URL", "https://eve.idfy.com/v3/tasks/sync/verify_with_source/pan")
 IDFY_RESULT_URL = "https://eve.idfy.com/v3/tasks?request_id={request_id}"
+
+
+# SESSION_COOKIE_SAMESITE = "None"
+# SESSION_COOKIE_SECURE = True  # Required if you're on HTTPS
+
+CORS_ALLOWED_ORIGINS = ["http://localhost:3000"]
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = False
+CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SECURE = False

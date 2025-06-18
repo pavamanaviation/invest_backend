@@ -1,32 +1,35 @@
-import random
+import os
 import json
-import pytz
-from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
-from django.db import IntegrityError
-from django.utils import timezone
-import requests
-from .models import CustomerRegister,KYCDetails, CustomerMoreDetails
-from .sms_utils import send_otp_sms
-from django.core.mail import EmailMultiAlternatives
-from django.conf import settings
-from datetime import timedelta
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-import json
-# from .idfy_verification import verify_pan_idfy
-import uuid
 import time
+from urllib import response
+import uuid
+import random
+import pytz
+import mimetypes
+import requests
+
+from datetime import datetime, timedelta
+
+from django.conf import settings
+from django.utils import timezone
+from django.db import IntegrityError
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-import json
-from datetime import datetime
-
-from .idfy_verification import (send_pan_verification_request, get_pan_verification_result,
-verify_aadhar_sync,verify_bank_account_sync)
-
-from .models import KYCDetails, CustomerRegister
+from django.core.mail import EmailMultiAlternatives
 from django.shortcuts import get_object_or_404
+
+import boto3
+
+from .models import CustomerRegister, KYCDetails, CustomerMoreDetails, NoomineeDetails
+from .sms_utils import send_otp_sms
+from .idfy_verification import (
+    send_pan_verification_request,
+    get_pan_verification_result,
+    verify_aadhar_sync,
+    verify_bank_account_sync
+)
+
+
 def get_indian_time():
     india_tz = pytz.timezone('Asia/Kolkata')
     return timezone.now().astimezone(india_tz)
@@ -537,20 +540,15 @@ def customer_profile_view(request):
         return JsonResponse({"error": "Only POST allowed."}, status=405)
 
     try:
-        data = json.loads(request.body)
-        customer_id = data.get('customer_id')
-
         session_customer_id = request.session.get('customer_id')
+        if not session_customer_id:
+            return JsonResponse({"error": "Unauthorized: Login required."}, status=403)
 
-        if not customer_id or not session_customer_id or customer_id != session_customer_id:
-            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-        customer = CustomerRegister.objects.filter(id=customer_id).first()
+        customer = CustomerRegister.objects.filter(id=session_customer_id).first()
         if not customer:
             return JsonResponse({"error": "Customer not found."}, status=404)
-        
-        more_details = CustomerMoreDetails.objects.filter(customer=customer).first()
 
-        response_data = {
+        return JsonResponse({
             "customer_id": customer.id,
             "first_name": customer.first_name,
             "last_name": customer.last_name,
@@ -558,9 +556,8 @@ def customer_profile_view(request):
             "mobile_no": customer.mobile_no,
             "register_status": customer.register_status,
             "account_status": customer.account_status,
-        }
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON."}, status=400)   
+        }, status=200)
+
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
@@ -754,7 +751,7 @@ def pan_verification_result_view(request):
 
     # Return enriched response
     result["pan_status"] = pan_status
-    result["message"] = "PAN verification completed successfully.Pl"
+    result["message"] = "PAN verification completed successfully."
     return JsonResponse(result, safe=False)
 @csrf_exempt
 def aadhar_lite_verification_view(request):
@@ -864,3 +861,133 @@ def bank_account_verification_view(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+@csrf_exempt
+def upload_pdf_document(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    customer_id = request.POST.get('customer_id')
+    doc_type = request.POST.get('doc_type')  # 'aadhar' or 'pan'
+    file = request.FILES.get('kyc_file')
+
+    if not all([customer_id, doc_type, file]):
+        return JsonResponse({'error': 'Customer ID, doc_type, and file required'}, status=400)
+
+    if doc_type not in ['aadhar', 'pan']:
+        return JsonResponse({'error': "doc_type must be either 'aadhar' or 'pan'"}, status=400)
+
+    file_name = file.name
+    mime_type, _ = mimetypes.guess_type(file_name)
+    
+    allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
+    allowed_mime_types = ['application/pdf', 'image/jpeg', 'image/png']
+    
+    file_ext = os.path.splitext(file_name)[1]
+    if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
+        return JsonResponse({'error': 'Only PDF or image files (JPG, PNG) are allowed.'}, status=400)
+
+    customer = get_object_or_404(CustomerRegister, id=customer_id)
+    kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
+    # customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_")
+    customer_folder = f"{customer_id}_{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
+    s3_filename = f"{customer_folder}/{doc_type}.pdf"  # e.g., 1234_john_doe/aadhar.pdf
+
+    try:
+        s3_url = upload_file_to_s3(file, s3_filename)
+       
+        if doc_type == 'aadhar':
+            kyc.aadhar_path = s3_filename 
+        else:
+            kyc.pan_path = s3_filename 
+
+
+        kyc.save()
+        return JsonResponse({"message": "PDF uploaded successfully", "pdf_url": s3_url})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+def upload_file_to_s3(file_obj, s3_key):
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_S3_REGION_NAME,
+    )
+
+    s3.upload_fileobj(file_obj, settings.AWS_STORAGE_BUCKET_NAME, s3_key,)
+
+    return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+
+@csrf_exempt
+def nominee_details(request):
+    if request.method == "POST":
+        try:            
+            customer_id = request.session.get('customer_id')  # Use session
+            if not customer_id:
+                return JsonResponse({"error": "Customer not logged in."}, status=401)
+
+            first_name = request.POST.get('first_name')
+            last_name = request.POST.get('last_name')
+            relation = request.POST.get('relation')
+            dob_str = request.POST.get('dob')
+            dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
+            address_proof = request.POST.get('address_proof')
+            id_proof = request.POST.get('id_proof')
+
+            address_proof_file = request.FILES.get('address_proof_file')
+            id_proof_file = request.FILES.get('id_proof_file')
+
+            if not all([customer_id, first_name, last_name, relation, dob, address_proof, id_proof]):
+                return JsonResponse({"error": "All fields are required."}, status=400)
+
+            customer = get_object_or_404(CustomerRegister, id=customer_id)
+            customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_")
+            nominee_name = f"{first_name}_{last_name}".replace(" ", "_")
+            
+            # Upload files to S3
+            if address_proof_file:
+                file_name = address_proof_file.name
+                mime_type, _ = mimetypes.guess_type(file_name)
+                if not file_name.lower().endswith('.pdf') or mime_type != 'application/pdf':
+                    return JsonResponse({'error': 'Only PDF files are allowed for address proof.'}, status=400)
+
+                s3_key = f"nominee-docs/{customer_id}_{customer_name}/address_proof_{nominee_name}.pdf"
+                address_proof_path = upload_file_to_s3(address_proof_file, s3_key)
+
+            if id_proof_file:
+                file_name = id_proof_file.name
+                mime_type, _ = mimetypes.guess_type(file_name)
+                if not file_name.lower().endswith('.pdf') or mime_type != 'application/pdf':
+                    return JsonResponse({'error': 'Only PDF files are allowed for ID proof.'}, status=400)
+
+                s3_key = f"nominee-docs/{customer_id}_{customer_name}/id_proof_{nominee_name}.pdf"
+                id_proof_path = upload_file_to_s3(id_proof_file, s3_key)
+
+            
+            nominee,created= NoomineeDetails.objects.update_or_create(
+                customer=customer,
+                defaults={
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "relation": relation,
+                    "dob": dob,
+                    "address_proof": address_proof,
+                    "address_proof_path": address_proof_path,
+                    "id_proof": id_proof,
+                    "id_proof_path": id_proof_path
+                }
+            )
+            return JsonResponse({
+                "message": "Nominee details saved successfully.",
+                "nominee_id": nominee.id,
+                "first_name": nominee.first_name,
+                "last_name": nominee.last_name,
+                "relation": nominee.relation,
+                "dob": nominee.dob.strftime("%Y-%m-%d") if nominee.dob else None,
+                "address_proof": nominee.address_proof,
+                "address_proof_path": nominee.address_proof_path,
+                "id_proof": nominee.id_proof,
+                "id_proof_path": nominee.id_proof_path
+            }, status=200)
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "Invalid JSON."}, status=400)

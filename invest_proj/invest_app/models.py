@@ -72,13 +72,14 @@ class KYCDetails(models.Model):
     pan_task_id = models.CharField(max_length=100, null=True, blank=True)
     idfy_pan_status = models.CharField(max_length=10, null=True, blank=True)
     pan_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
-    
+    pan_path= models.CharField(max_length=250, null=True, blank=True)  # Path to the PAN document
 
     aadhar_number = models.CharField(max_length=12, unique=True, null=True, blank=True)
     aadhar_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
     aadhar_task_id = models.CharField(max_length=100, blank=True, null=True)
     idfy_aadhar_status = models.CharField(max_length=10, null=True, blank=True)
-    
+    aadhar_path = models.CharField(max_length=250, null=True, blank=True)  # Path to the Aadhar document
+
     banck_account_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
     banck_name = models.CharField(max_length=50, null=True, blank=True)
     ifsc_code = models.CharField(max_length=11, null=True, blank=True)
@@ -109,3 +110,20 @@ class CustomerMoreDetails(models.Model):
     designation = models.CharField(max_length=50, null=True, blank=True)
     personal_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
     created_at = models.DateTimeField(auto_now_add=True)
+    def __str__(self):
+        return f"More Details for {self.customer.email}" if self.customer else "Customer More Details"
+
+class NoomineeDetails(models.Model):
+    customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+    first_name = models.CharField(max_length=100, null=True, blank=True)
+    last_name = models.CharField(max_length=100, null=True, blank=True)
+    relation = models.CharField(max_length=50, null=True, blank=True)
+    dob = models.DateField(null=True, blank=True)
+    address_proof= models.CharField(max_length=50, null=True, blank=True)  # e.g., "Aadhar", "PAN", etc.
+    address_proof_path=models.CharField(max_length=250, null=True, blank=True)
+    id_proof = models.CharField(max_length=50, null=True, blank=True)  # e.g., "Aadhar", "PAN", etc.
+    id_proof_path = models.CharField(max_length=250, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Nominee for {self.customer.email}" if self.customer else "Nominee Details"

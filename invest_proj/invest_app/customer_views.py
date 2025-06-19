@@ -1,3 +1,4 @@
+from multiprocessing.connection import Client
 import os
 import json
 import time
@@ -586,6 +587,7 @@ def customer_profile_view(request):
             "register_status": customer.register_status,
             "account_status": customer.account_status,
             "kyc_accept_status": customer.kyc_accept_status,
+            "payment_accept_status":customer.payment_accept_status
         }, status=200)
 
     except Exception as e:
@@ -611,47 +613,149 @@ def get_location_by_pincode(pincode):
     return {}
     
 
+# @csrf_exempt
+# def customer_more_details(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST allowed."}, status=405)
+    
+#     try:
+#         # customer_id = request.session.get('customer_id')
+#         # if not customer_id:
+#         #     return JsonResponse({"error": "No customer in session."}, status=401)
+
+        
+#         data = json.loads(request.body)
+#         customer_id = data.get('customer_id')
+
+#         session_customer_id = request.session.get('customer_id')
+#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#         # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+#         customer = CustomerRegister.objects.filter(id=customer_id).first()
+#         if not customer:
+#             return JsonResponse({"error": "Customer not found."}, status=404)
+#         more = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+#         if more and more.personal_status == 1:
+#             return JsonResponse({"error": "Personal details already submitted. Please proceed to next step."}, status=400)
+
+#         mobile_no = data.get('mobile_no')
+#         email = data.get('email')
+#         dob_str = data.get('dob')
+#         gender = data.get('gender')
+#         address = data.get('address') #keep flat no,street,area,landmark
+#         pincode = data.get('pincode')
+#         # mandal = data.get('mandal', '')
+#         designation = data.get('designation')
+#         profession = data.get('profession')
+
+#         if not (mobile_no and email):
+#             return JsonResponse({"error": "Mobile no, and email are required."}, status=400)
+
+#         dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
+#         # more = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+#         # if more and more.personal_status == 1:
+#         #     return JsonResponse({"error": "Personal details already submitted. Please proceed to next step."}, status=400)
+
+#         # Get location details
+#         location = get_location_by_pincode(pincode)
+
+#         if not more:
+#             more = CustomerMoreDetails.objects.create(
+#                 customer=customer,
+#                 dob=dob,
+#                 gender=gender,
+#                 address=address,
+#                 pincode=pincode,
+#                 designation=designation,
+#                 profession=profession,
+#                 district = location.get("district", ""),
+#                 state = location.get("state", ""),
+#                 country = location.get("country", ""),
+#                 city = location.get("city", ""),
+#                 mandal = location.get("block", ""),
+#                 personal_status=1
+#             )
+
+#         customer_details = {
+#             "customer_id": customer.id,
+#             "first_name": customer.first_name,
+#             "last_name": customer.last_name,
+#             "email": customer.email,
+#             "mobile_no": customer.mobile_no,
+#             "register_status": customer.register_status,
+#             "account_status": customer.account_status,
+#             "dob": more.dob,
+#             "gender": more.gender,
+#             "address": more.address,
+#             "pincode": more.pincode,
+#             "designation": more.designation,
+#             "profession": more.profession,
+#             "district": location.get("district"),
+#             "state": location.get("state"),
+#             "country": location.get("country"),
+#             "city": location.get("city"),
+#             "mandal": more.mandal,
+#             "personal_status": more.personal_status,
+#         }
+
+#         return JsonResponse({
+#             "message": "Customer details updated successfully.",
+#             "customer_details": customer_details,
+#         }, status=200)
+
+#     except json.JSONDecodeError:
+#         return JsonResponse({"error": "Invalid JSON."}, status=400)
+#     except Exception as e:
+#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 @csrf_exempt
 def customer_more_details(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST allowed."}, status=405)
-    
-    try:
-        # customer_id = request.session.get('customer_id')
-        # if not customer_id:
-        #     return JsonResponse({"error": "No customer in session."}, status=401)
 
-        
+    try:
         data = json.loads(request.body)
         customer_id = data.get('customer_id')
-
         session_customer_id = request.session.get('customer_id')
+
         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-        # if not customer_id or not session_customer_id or customer_id != session_customer_id:
             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+
         customer = CustomerRegister.objects.filter(id=customer_id).first()
         if not customer:
             return JsonResponse({"error": "Customer not found."}, status=404)
+
+        more = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+        # If personal details already submitted, return limited info with view_only action
+        if more and more.personal_status == 1:
+            return JsonResponse({
+                "action": "view_only",
+                "message": "Personal details already submitted. Please proceed for next.",
+                "customer_readonly_info": {
+                    "customer_id": customer.id,
+                    "first_name": customer.first_name,
+                    "last_name": customer.last_name,
+                    "email": customer.email,
+                    "personal_status":more.personal_status
+                }
+            }, status=200)
+
+        # If personal_status != 1 (0 or new), allow data entry and save
         mobile_no = data.get('mobile_no')
         email = data.get('email')
         dob_str = data.get('dob')
         gender = data.get('gender')
-        address = data.get('address') #keep flat no,street,area,landmark
+        address = data.get('address')
         pincode = data.get('pincode')
-        # mandal = data.get('mandal', '')
         designation = data.get('designation')
         profession = data.get('profession')
 
         if not (mobile_no and email):
-            return JsonResponse({"error": "Mobile no, and email are required."}, status=400)
+            return JsonResponse({"error": "Mobile number and email are required."}, status=400)
 
         dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
-        more = CustomerMoreDetails.objects.filter(customer=customer).first()
-
-        if more and more.personal_status == 1:
-            return JsonResponse({"error": "Personal details already submitted. Please proceed to next step."}, status=400)
-
-        # Get location details
         location = get_location_by_pincode(pincode)
 
         if not more:
@@ -663,11 +767,11 @@ def customer_more_details(request):
                 pincode=pincode,
                 designation=designation,
                 profession=profession,
-                district = location.get("district", ""),
-                state = location.get("state", ""),
-                country = location.get("country", ""),
-                city = location.get("city", ""),
-                mandal = location.get("block", ""),
+                district=location.get("district", ""),
+                state=location.get("state", ""),
+                country=location.get("country", ""),
+                city=location.get("city", ""),
+                mandal=location.get("block", ""),
                 personal_status=1
             )
 
@@ -685,16 +789,17 @@ def customer_more_details(request):
             "pincode": more.pincode,
             "designation": more.designation,
             "profession": more.profession,
-            "district": location.get("district"),
-            "state": location.get("state"),
-            "country": location.get("country"),
-            "city": location.get("city"),
+            "district": more.district,
+            "state": more.state,
+            "country": more.country,
+            "city": more.city,
             "mandal": more.mandal,
             "personal_status": more.personal_status,
         }
 
         return JsonResponse({
-            "message": "Customer details updated successfully.",
+            "message": "Customer details saved successfully.",
+            "action": "add_details",
             "customer_details": customer_details,
         }, status=200)
 
@@ -702,58 +807,136 @@ def customer_more_details(request):
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+# @csrf_exempt
+# def pan_verification_request_view(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST allowed."}, status=405)
+    
+#     data = json.loads(request.body)
+#     customer_id = data.get('customer_id')
+
+#     session_customer_id = request.session.get('customer_id')
+#     if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#         # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+#     pan_number = data.get('pan_number')
+#     customer_id = data.get('customer_id')
+
+#     if not all([pan_number, customer_id]):
+#         return JsonResponse({"error": "Missing required fields"}, status=400)
+#     kyc = KYCDetails.objects.filter(customer__id=customer_id).first()
+#     # if kyc and kyc.pan_status == 1:
+#     #     return JsonResponse({"error": "PAN verification already completed.Please proceed for next"}, status=400)
+#     # Already verified
+#     if kyc and kyc.pan_status == 1:
+#         return JsonResponse({
+#             "action": "view_only",
+#             "message": "PAN already verified.",
+#             "pan_status": kyc.pan_status,
+#         }, status=200)
+#     if not pan_number:
+#             return JsonResponse({"error": "PAN number is required for verification."}, status=400)
+
+#     customer = get_object_or_404(CustomerRegister, id=customer_id)
+#     full_name = f"{customer.first_name} {customer.last_name}".strip()
+#     more= CustomerMoreDetails.objects.filter(customer=customer).first()
+#     dob = more.dob.strftime("%Y-%m-%d") if more and more.dob else None
+
+#     if not dob:
+#         return JsonResponse({"error": "DOB is required for PAN verification."}, status=400)
+#     task_id = str(uuid.uuid4())
+#     response_data = send_pan_verification_request(pan_number,full_name,dob, task_id)
+
+#     if 'request_id' in response:
+#         kyc, _ = KYCDetails.objects.update_or_create(
+#             customer=customer,
+#             defaults={
+#                 "pan_number": pan_number,
+#                 "pan_request_id": response["request_id"],
+#                 "pan_group_id": settings.IDFY_TEST_GROUP_ID,
+#                 "pan_task_id": task_id,
+#                 "pan_status": 1  # Request initiated
+#             }
+#         )
+
+#         return JsonResponse({
+#             "action": "verify",
+#             "message": "PAN verification initiated.",
+#             "request_id": response_data["request_id"],
+#             "task_id": task_id,
+#             "pan_status": kyc.pan_status,
+#             "raw_response": response_data
+#         })
+
+#     return JsonResponse({"error": response}, status=500)
 @csrf_exempt
 def pan_verification_request_view(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST allowed."}, status=405)
-    
-    data = json.loads(request.body)
-    customer_id = data.get('customer_id')
 
-    session_customer_id = request.session.get('customer_id')
-    if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-        # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+        pan_number = data.get('pan_number')
+
+        session_customer_id = request.session.get('customer_id')
+        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-    pan_number = data.get('pan_number')
-    customer_id = data.get('customer_id')
 
-    if not all([pan_number, customer_id]):
-        return JsonResponse({"error": "Missing required fields"}, status=400)
-    kyc = KYCDetails.objects.filter(customer__id=customer_id).first()
-    if kyc and kyc.pan_status == 1:
-        return JsonResponse({"error": "PAN verification already completed.Please proceed for next"}, status=400)
-    
-    customer = get_object_or_404(CustomerRegister, id=customer_id)
-    full_name = f"{customer.first_name} {customer.last_name}".strip()
-    more= CustomerMoreDetails.objects.filter(customer=customer).first()
-    dob = more.dob.strftime("%Y-%m-%d") if more and more.dob else None
+        if not customer_id:
+            return JsonResponse({"error": "Customer ID is required."}, status=400)
 
-    if not dob:
-        return JsonResponse({"error": "DOB is required for PAN verification."}, status=400)
-    task_id = str(uuid.uuid4())
-    response_data = send_pan_verification_request(pan_number,full_name,dob, task_id)
+        customer = get_object_or_404(CustomerRegister, id=customer_id)
+        kyc = KYCDetails.objects.filter(customer=customer).first()
 
-    if 'request_id' in response:
-        kyc, _ = KYCDetails.objects.update_or_create(
-            customer=customer,
-            defaults={
-                "pan_number": pan_number,
-                "pan_request_id": response["request_id"],
-                "pan_group_id": settings.IDFY_TEST_GROUP_ID,
-                "pan_task_id": task_id,
-                "pan_status": 1  # Request initiated
-            }
-        )
+        #Already verified
+        if kyc and kyc.pan_status == 1:
+            return JsonResponse({
+                "action": "view_only",
+                "message": "PAN already verified.",
+            }, status=200)
 
-        return JsonResponse({
-            "message": "PAN verification initiated.",
-            "request_id": response_data["request_id"],
-            "task_id": task_id,
-            "pan_status": kyc.pan_status,
-            "raw_response": response_data
-        })
+        #For new or pending verification, ensure pan_number is provided
+        if not pan_number:
+            return JsonResponse({"error": "PAN number is required for verification."}, status=400)
 
-    return JsonResponse({"error": response}, status=500)
+        more = CustomerMoreDetails.objects.filter(customer=customer).first()
+        dob = more.dob.strftime("%Y-%m-%d") if more and more.dob else None
+        if not dob:
+            return JsonResponse({"error": "DOB is required for PAN verification."}, status=400)
+
+        full_name = f"{customer.first_name} {customer.last_name}".strip()
+        task_id = str(uuid.uuid4())
+        response_data = send_pan_verification_request(pan_number, full_name, dob, task_id)
+
+        if 'request_id' in response_data:
+            kyc, _ = KYCDetails.objects.update_or_create(
+                customer=customer,
+                defaults={
+                    "pan_number": pan_number,
+                    "pan_request_id": response_data["request_id"],
+                    "pan_group_id": settings.IDFY_TEST_GROUP_ID,
+                    "pan_task_id": task_id,
+                    "pan_status": 1  # PAN verified
+                }
+            )
+
+            return JsonResponse({
+                "action": "verify",
+                "message": "PAN verification initiated.",
+                "request_id": response_data["request_id"],
+                "task_id": task_id,
+                "pan_status": kyc.pan_status,
+                "raw_response": response_data
+            }, status=200)
+
+        return JsonResponse({"error": response_data}, status=500)
+
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON."}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
 @csrf_exempt
 def pan_verification_result_view(request):
@@ -790,64 +973,183 @@ def pan_verification_result_view(request):
     result["pan_status"] = pan_status
     result["message"] = "PAN verification completed successfully."
     return JsonResponse(result, safe=False)
+# @csrf_exempt
+# def aadhar_lite_verification_view(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+    
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.get('customer_id')
+
+#         session_customer_id = request.session.get('customer_id')
+#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#             # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+#                 return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+#         aadhar_number = data.get("aadhar_number")
+#         customer_id = data.get("customer_id")
+
+#         if not aadhar_number or not customer_id:
+#             return JsonResponse({'error': 'aadhar_number and customer_id required'}, status=400)
+        
+#         kyc= KYCDetails.objects.filter(customer_id=customer_id).first()
+#         if kyc and kyc.aadhar_status == 1:
+#             return JsonResponse({"error": "Aadhaar details already submitted. Please proceed to next step."}, status=400)
+#         # Step 1: Call IDfy for verification
+#         task_id = str(uuid.uuid4())
+#         result = verify_aadhar_sync(aadhar_number, task_id)
+
+#         # Step 2: Extract aadhar status
+#         idfy_aadhar_status = result.get("status", None)
+#         aadhar_status = 1 if idfy_aadhar_status == "completed" else 0
+#         # idfy_aadhar_status = result.get("result", {}).get("source_output", {}).get("status", None)
+
+#         # idfy_aadhar_status = result.get("result", {}).get("output", {}).get("status") or "unknown"
+#         # idfy_aadhar_status = result.get("result", {}).get("output", {}).get("status", None)
+
+#         # Step 3: Save to DB
+#         customer = get_object_or_404(CustomerRegister, id=customer_id)
+#         KYCDetails.objects.update_or_create(
+#             customer=customer,
+#             defaults={
+#                 "aadhar_number": aadhar_number,
+#                 "aadhar_status":aadhar_status,
+#                 "idfy_aadhar_status": idfy_aadhar_status,  # You should have this field in your model
+#                 "aadhar_task_id": task_id
+#             }
+#         )
+#         # Step 4: Return custom response instead of full result
+#         return JsonResponse({
+#             "message": "Aadhaar verification completed successfully.",
+#             "aadhar_status": aadhar_status,
+#             "idfy_aadhar_status": idfy_aadhar_status,
+#             "task_id": task_id,
+#             "result": result
+#         })
+#         # return JsonResponse(result, safe=False)
+    
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
 @csrf_exempt
 def aadhar_lite_verification_view(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Only POST allowed'}, status=405)
-    
+
     try:
         data = json.loads(request.body)
         customer_id = data.get('customer_id')
+        aadhar_number = data.get('aadhar_number')
 
         session_customer_id = request.session.get('customer_id')
         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            # if not customer_id or not session_customer_id or customer_id != session_customer_id:
-                return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-        aadhar_number = data.get("aadhar_number")
-        customer_id = data.get("customer_id")
+            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
 
-        if not aadhar_number or not customer_id:
-            return JsonResponse({'error': 'aadhar_number and customer_id required'}, status=400)
-        
-        kyc= KYCDetails.objects.filter(customer_id=customer_id).first()
+        if not customer_id:
+            return JsonResponse({'error': 'customer_id is required'}, status=400)
+
+        customer = get_object_or_404(CustomerRegister, id=customer_id)
+        kyc = KYCDetails.objects.filter(customer=customer).first()
+
+        # Case: Aadhaar already verified
         if kyc and kyc.aadhar_status == 1:
-            return JsonResponse({"error": "Aadhaar details already submitted. Please proceed to next step."}, status=400)
-        # Step 1: Call IDfy for verification
+            return JsonResponse({
+                "action": "view_only",
+                "message": "Aadhaar already verified.",
+                "idfy_aadhar_status": kyc.idfy_aadhar_status,
+                "aadhar_status": kyc.aadhar_status,
+            }, status=200)
+
+        if not aadhar_number:
+            return JsonResponse({'error': 'aadhar_number is required for verification'}, status=400)
+
         task_id = str(uuid.uuid4())
         result = verify_aadhar_sync(aadhar_number, task_id)
 
-        # Step 2: Extract aadhar status
         idfy_aadhar_status = result.get("status", None)
         aadhar_status = 1 if idfy_aadhar_status == "completed" else 0
-        # idfy_aadhar_status = result.get("result", {}).get("source_output", {}).get("status", None)
 
-        # idfy_aadhar_status = result.get("result", {}).get("output", {}).get("status") or "unknown"
-        # idfy_aadhar_status = result.get("result", {}).get("output", {}).get("status", None)
-
-        # Step 3: Save to DB
-        customer = get_object_or_404(CustomerRegister, id=customer_id)
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
                 "aadhar_number": aadhar_number,
-                "aadhar_status":aadhar_status,
-                "idfy_aadhar_status": idfy_aadhar_status,  # You should have this field in your model
+                "aadhar_status": aadhar_status,
+                "idfy_aadhar_status": idfy_aadhar_status,
                 "aadhar_task_id": task_id
             }
         )
-        # Step 4: Return custom response instead of full result
         return JsonResponse({
+            "action": "verify",
             "message": "Aadhaar verification completed successfully.",
             "aadhar_status": aadhar_status,
             "idfy_aadhar_status": idfy_aadhar_status,
             "task_id": task_id,
             "result": result
-        })
-        # return JsonResponse(result, safe=False)
-    
+        }, status=200)
+
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+# @csrf_exempt
+# def bank_account_verification_view(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.get('customer_id')
+
+#         session_customer_id = request.session.get('customer_id')
+#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#             # if not customer_id or not session_customer_id or customer_id != session_customer_id:
+#                 return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+#         account_number = data.get("account_number")
+#         ifsc = data.get("ifsc")
+#         customer_id = data.get("customer_id")
+
+#         if not account_number or not ifsc or not customer_id:
+#             return JsonResponse({'error': 'account_number, ifsc, and customer_id required'}, status=400)
+
+#         # Call IDfy sync verification
+#         task_id, result = verify_bank_account_sync(account_number, ifsc)
+
+#         # Extract verification result
+#         idfy_bank_status = result.get("status", "")
+#         source_output = result.get("result", {}).get("source_output", {})
+#         verified = source_output.get("verified", False)
+#         bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
+
+#         # Determine status: 1 = verified, 2 = failed, 0 = pending
+#         bank_status = 1 if idfy_bank_status == "completed" else 0
+#         kyc= KYCDetails.objects.filter(customer_id=customer_id).first()
+#         if not kyc:
+#             return JsonResponse({"error": "KYC details not found for the customer."}, status=404)
+#         if kyc.bank_status == 1:
+#             return JsonResponse({"error": "Bank details already submitted. Please proceed to next step."}, status=400)
+
+#         # Update or create KYC details
+#         customer = get_object_or_404(CustomerRegister, id=customer_id)
+#         KYCDetails.objects.update_or_create(
+#             customer=customer,
+#             defaults={
+#                 "banck_account_number": account_number,
+#                 "ifsc_code": ifsc,
+#                 "bank_name": bank_name,
+#                 "bank_task_id": task_id,
+#                 "idfy_bank_status": idfy_bank_status,
+#                 "bank_status": bank_status
+#             }
+#         )
+#         return JsonResponse({
+#             "message": "Bank verification completed",
+#             "verified": verified,
+#             "bank_status": bank_status,
+#             "idfy_bank_status": idfy_bank_status,
+#             "task_id": task_id,
+#             "raw_response": result
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
 @csrf_exempt
 def bank_account_verification_view(request):
     if request.method != 'POST':
@@ -856,37 +1158,40 @@ def bank_account_verification_view(request):
     try:
         data = json.loads(request.body)
         customer_id = data.get('customer_id')
+        account_number = data.get("account_number")
+        ifsc = data.get("ifsc")
 
         session_customer_id = request.session.get('customer_id')
         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            # if not customer_id or not session_customer_id or customer_id != session_customer_id:
-                return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-        account_number = data.get("account_number")
-        ifsc = data.get("ifsc")
-        customer_id = data.get("customer_id")
+            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
 
-        if not account_number or not ifsc or not customer_id:
-            return JsonResponse({'error': 'account_number, ifsc, and customer_id required'}, status=400)
+        if not customer_id:
+            return JsonResponse({'error': 'customer_id is required'}, status=400)
 
-        # Call IDfy sync verification
+        customer = get_object_or_404(CustomerRegister, id=customer_id)
+        kyc = KYCDetails.objects.filter(customer=customer).first()
+
+        # Action: view_only
+        if kyc and kyc.bank_status == 1:
+            return JsonResponse({
+                "action": "view_only",
+                "message": "Bank account already verified.Please proceed for next.",
+                "bank_status": kyc.bank_status,
+                "idfy_bank_status": kyc.idfy_bank_status
+            }, status=200)
+
+        #Action: verify
+        if not account_number or not ifsc:
+            return JsonResponse({'error': 'account_number and ifsc are required for verification'}, status=400)
+
         task_id, result = verify_bank_account_sync(account_number, ifsc)
-
-        # Extract verification result
         idfy_bank_status = result.get("status", "")
         source_output = result.get("result", {}).get("source_output", {})
         verified = source_output.get("verified", False)
         bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
 
-        # Determine status: 1 = verified, 2 = failed, 0 = pending
-        bank_status = 1 if idfy_bank_status == "completed" else 0
-        kyc= KYCDetails.objects.filter(customer_id=customer_id).first()
-        if not kyc:
-            return JsonResponse({"error": "KYC details not found for the customer."}, status=404)
-        if kyc.bank_status == 1:
-            return JsonResponse({"error": "Bank details already submitted. Please proceed to next step."}, status=400)
-
-        # Update or create KYC details
-        customer = get_object_or_404(CustomerRegister, id=customer_id)
+        # bank_status = 1 if idfy_bank_status == "completed" and verified else 2 if not verified else 0
+        bank_status = 1 if idfy_bank_status == "completed" and verified else 0
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
@@ -898,14 +1203,16 @@ def bank_account_verification_view(request):
                 "bank_status": bank_status
             }
         )
+
         return JsonResponse({
-            "message": "Bank verification completed",
+            "action": "verify",
+            "message": "Bank verification completed.",
             "verified": verified,
             "bank_status": bank_status,
             "idfy_bank_status": idfy_bank_status,
             "task_id": task_id,
             "raw_response": result
-        })
+        }, status=200)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
@@ -928,8 +1235,8 @@ def upload_pdf_document(request):
     if not all([customer_id, doc_type, file]):
         return JsonResponse({'error': 'Customer ID, doc_type, and file required'}, status=400)
 
-    if doc_type not in ['aadhar', 'pan']:
-        return JsonResponse({'error': "doc_type must be either 'aadhar' or 'pan'"}, status=400)
+    if doc_type not in ['aadhar', 'pan', 'selfie', 'signature']:
+        return JsonResponse({'error': "doc_type must be 'aadhar', 'pan', 'selfie', or 'signature'"}, status=400)
 
     file_name = file.name
     mime_type, _ = mimetypes.guess_type(file_name)
@@ -943,6 +1250,7 @@ def upload_pdf_document(request):
 
     customer = get_object_or_404(CustomerRegister, id=customer_id)
     kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
+    more,_=CustomerMoreDetails.objects.get_or_create(customer=customer)
     customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
     customer_folder = f"{customer_id}_{customer_name}".lower()
     s3_filename = f"{customer_folder}/{doc_type}_{customer_name}{file_ext}"  # e.g., 1234_kapil_dev/aadhar.pdf or pan.jpg
@@ -951,12 +1259,20 @@ def upload_pdf_document(request):
         s3_url = upload_file_to_s3(file, s3_filename)
        
         if doc_type == 'aadhar':
-            kyc.aadhar_path = s3_filename 
-        else:
-            kyc.pan_path = s3_filename 
+            kyc.aadhar_path = s3_filename
+        elif doc_type == 'pan':
+            kyc.pan_path = s3_filename
+        elif doc_type == 'selfie':
+            more.selfie_path = s3_filename
+        elif doc_type == 'signature':
+            more.signature_path = s3_filename
 
         kyc.save()
-        return JsonResponse({"status":"sucess","message": "Document uploaded successfully", "pdf_url": s3_url})
+        return JsonResponse({
+            "status": "success",
+            "message": f"{doc_type.capitalize()} document uploaded successfully.",
+            "file_url": s3_url
+        })
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
@@ -999,18 +1315,19 @@ def nominee_details(request):
             dob_str = request.POST.get('dob')
             dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
             address_proof = request.POST.get('address_proof')
-            id_proof = request.POST.get('id_proof')
+            # id_proof = request.POST.get('id_proof')
 
             address_proof_file = request.FILES.get('address_proof_file')
             id_proof_file = request.FILES.get('id_proof_file')
 
-            if not all([customer_id, first_name, last_name, relation, dob, address_proof, id_proof]):
+            if not all([customer_id, first_name, last_name, relation, dob, address_proof]):
                 return JsonResponse({"error": "All fields are required."}, status=400)
             # Allowed formats
             allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
             allowed_mime_types = ['application/pdf', 'image/jpeg', 'image/png']
 
             customer = get_object_or_404(CustomerRegister, id=customer_id)
+            mobile_no=customer.mobile_no
             nominee_name = f"{first_name}_{last_name}".replace(" ", "_")
             customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
             folder_name = f"{customer.id}_{customer_name}"
@@ -1051,10 +1368,21 @@ def nominee_details(request):
                     "dob": dob,
                     "address_proof": address_proof,
                     "address_proof_path": address_proof_path,
-                    "id_proof": id_proof,
                     "id_proof_path": id_proof_path
                 }
             )
+            #Send SMS inside this function
+            try:
+                message = f"Dear {customer.first_name}, your nominee {first_name} {last_name} has been successfully registered."
+                # client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+                send_otp_sms(mobile_no,message)
+                # print(f"SMS sent: {sms.sid}")
+            except Exception as sms_err:
+                print("SMS sending failed:", sms_err)
+
+            #Send Email using helper
+            # send_nominee_email(customer, f"{first_name} {last_name}", relation)
+            send_nominee_email(customer, nominee_name, relation)
             return JsonResponse({
                 "message": "Nominee details saved successfully.",
                 "nominee_id": nominee.id,
@@ -1064,7 +1392,7 @@ def nominee_details(request):
                 "dob": nominee.dob.strftime("%Y-%m-%d") if nominee.dob else None,
                 "address_proof": nominee.address_proof,
                 "address_proof_path": address_proof_path_s3_url,
-                "id_proof": nominee.id_proof,
+                # "id_proof": nominee.id_proof,
                 "id_proof_path": id_proof_path_s3_url,
             }, status=200)
 
@@ -1072,3 +1400,74 @@ def nominee_details(request):
             return JsonResponse({"error": "Invalid JSON."}, status=400)
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
+# def send_otp_sms(customer, nominee_name):
+#     try:
+#         message = f"Dear {customer.first_name}, your nominee {nominee_name} has been successfully registered."
+#         mobile_nos = [customer.mobile_no]  # Ensure it's in list form
+#         send_otp_sms(mobile_nos, message)
+#         return True
+#     except Exception as e:
+#         print("SMS sending failed:", e)
+#         return False
+
+def send_nominee_email(customer, nominee_name, relation):
+    try:
+        subject = "Nominee Registered Successfully"
+        from_email = settings.DEFAULT_FROM_EMAIL
+        to_email = [customer.email]
+
+        logo_url = f"{settings.AWS_S3_BUCKET_URL}/static/images/aviation-logo.png"
+        text_content = f"""
+    Hello {customer.first_name},
+    """
+
+        html_content = f"""
+<html>
+<head>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+        @media only screen and (max-width: 600px) {{
+            .container {{
+                width: 90% !important;
+                padding: 20px !important;
+            }}
+            .logo {{
+                max-width: 180px !important;
+                height: auto !important;
+            }}
+        }}
+    </style>
+</head>
+<body style="margin: 0; padding: 0; font-family: 'Inter', sans-serif; background-color: #f5f5f5;">
+    <div class="container" style="margin: 40px auto; background-color: #ffffff; border-radius: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 40px 30px; max-width: 480px; text-align: left;">
+        <div style="text-align: center;">
+            <img src="{logo_url}" alt="pavaman logo" class="logo" style="max-width: 280px; height: auto; margin-bottom: 20px;" />
+            <h2 style="margin-top: 0; color: #222;">Nominee Registration Successful</h2>
+        </div>
+        <div style="margin-bottom: 10px; color: #555; font-size: 14px;">
+            Hello {customer.first_name},
+        </div>
+
+        <p style="color: #555; margin-bottom: 20px;">
+            Your nominee <strong>{nominee_name}</strong> (<em>{relation}</em>) has been successfully registered.
+        </p>
+
+        <p style="color: #888; font-size: 14px;">
+            If you did not perform this action, you can safely ignore this email.<br/>
+            You're receiving this because you have an account on Pavaman.
+        </p>
+
+        <p style="margin-top: 30px; font-size: 14px; color: #888;">Disclaimer: This is an automated email. Please do not reply.</p>
+    </div>
+</body>
+</html>
+"""
+
+        email_message = EmailMultiAlternatives(subject, text_content, from_email, to_email)
+        email_message.attach_alternative(html_content, "text/html")
+        email_message.send()
+        return True
+
+    except Exception as e:
+        print("Email sending failed:", e)
+        return False

@@ -7,29 +7,36 @@ class Admin(models.Model):
     email = models.EmailField(max_length=50, unique=True)
     mobile_no = models.CharField(max_length=15, unique=True)
     otp = models.IntegerField(null=True, blank=True)
-    password = models.CharField(max_length=255)  # change from 50 to 255
+    otp_send_type = models.CharField(max_length=50, null=True, blank=True)
+    changed_on = models.DateTimeField(null=True, blank=True)
+    # password = models.CharField(max_length=255)  # change from 50 to 255
     # company_name = models.CharField(max_length=50)
     status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
     def __str__(self):
         return self.name
 
-# class Role(models.Model):
-#     name = models.CharField(max_length=50)
-#     email = models.EmailField(max_length=50, unique=True)
-#     # employee_id = models.CharField(max_length=15, unique=True)
-#     password = models.CharField(max_length=255)
-#     mobile_no = models.CharField(max_length=15, unique=True)
-#     company_name = models.CharField(max_length=50)
-#     role_type = models.CharField(max_length=50)
-#     created_at = models.DateTimeField(auto_now_add=True)
-#     delete_status = models.BooleanField(default=False)  # Suggestion: False means not deleted
-#     status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
-#     admin = models.ForeignKey(Admin, null=True, blank=True, on_delete=models.SET_NULL)
+class Role(models.Model):
+    first_name = models.CharField(max_length=50)
+    last_name = models.CharField(max_length=50)
+    email = models.EmailField(max_length=50, unique=True)
+    # employee_id = models.CharField(max_length=15, unique=True)
+    # password = models.CharField(max_length=255)
+    mobile_no = models.CharField(max_length=15, unique=True)
+    company_name = models.CharField(max_length=50)
+    role_type = models.CharField(max_length=50)
+    created_at = models.DateTimeField(auto_now_add=True)
+    delete_status = models.BooleanField(default=False)  # Suggestion: False means not deleted
+    otp = models.IntegerField(null=True, blank=True)
+    otp_send_type = models.CharField(max_length=50, null=True, blank=True)
+    changed_on = models.DateTimeField(null=True, blank=True)
+    status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
+    admin = models.ForeignKey(Admin, null=True, blank=True, on_delete=models.SET_NULL)
     
-#     def __str__(self):
-#         return f"{self.name} ({self.role_type})"
+    def __str__(self):
+        return f"{self.name} ({self.role_type})"
 class CustomerRegister(models.Model):
     admin= models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
+    role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
     email = models.EmailField(max_length=50,unique=True,null=True, blank=True)
@@ -66,6 +73,7 @@ class CustomerRegister(models.Model):
 class KYCDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
     admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)    
+    role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)
     pan_number = models.CharField(max_length=10, unique=True, null=True, blank=True)
     pan_request_id = models.CharField(max_length=100, null=True, blank=True)
     pan_group_id = models.CharField(max_length=100, null=True, blank=True)
@@ -98,7 +106,7 @@ class CustomerMoreDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
     admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
     # customer_kyc = models.ForeignKey(KYCDetails, on_delete=models.CASCADE, null=True, blank=True)
-
+    role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)
     address = models.TextField(null=True, blank=True)
     district = models.CharField(max_length=50, null=True, blank=True)
     mandal = models.CharField(max_length=50, null=True, blank=True)
@@ -112,6 +120,9 @@ class CustomerMoreDetails(models.Model):
     profession = models.CharField(max_length=50, null=True, blank=True)
     designation = models.CharField(max_length=50, null=True, blank=True)
     personal_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
+    selfie_path = models.CharField(max_length=250, null=True, blank=True)
+    signature_path = models.CharField(max_length=250, null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
@@ -119,7 +130,8 @@ class CustomerMoreDetails(models.Model):
 
 class NomineeDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
-    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)    
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
+    role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)    
     first_name = models.CharField(max_length=100, null=True, blank=True)
     last_name = models.CharField(max_length=100, null=True, blank=True)
     relation = models.CharField(max_length=50, null=True, blank=True)

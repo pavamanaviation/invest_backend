@@ -1308,6 +1308,19 @@ def nominee_details(request):
             # customer_id = request.session.get('customer_id')  # Use session
             # if not customer_id:
             #     return JsonResponse({"error": "Customer not logged in."}, status=401)
+            customer = get_object_or_404(CustomerRegister, id=customer_id)
+            nominee = NomineeDetails.objects.filter(customer=customer).first()
+
+            # View-only if nominee exists
+            if nominee:
+                return JsonResponse({
+                    "action": "view_only",
+                    "message": "Nominee already registered.",
+                    "nominee_id": nominee.id,
+                    "first_name": nominee.first_name,
+                    "last_name": nominee.last_name,
+                    "relation": nominee.relation,
+                }, status=200)
 
             first_name = request.POST.get('first_name')
             last_name = request.POST.get('last_name')
@@ -1384,6 +1397,7 @@ def nominee_details(request):
             # send_nominee_email(customer, f"{first_name} {last_name}", relation)
             send_nominee_email(customer, nominee_name, relation)
             return JsonResponse({
+                "action": "add_details",
                 "message": "Nominee details saved successfully.",
                 "nominee_id": nominee.id,
                 "first_name": nominee.first_name,

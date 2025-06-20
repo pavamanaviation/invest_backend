@@ -1281,14 +1281,18 @@ def upload_pdf_document(request):
             kyc.pan_path = s3_filename
         elif doc_type == 'selfie':
             more.selfie_path = s3_filename
+            more.selfie_status = 1 
         elif doc_type == 'signature':
             more.signature_path = s3_filename
+            more.signature_status = 1 
 
         kyc.save()
         return JsonResponse({
             "status": "success",
             "message": f"{doc_type.capitalize()} document uploaded successfully.",
-            "file_url": s3_url
+            "file_url": s3_url,
+            "selfie_status":more.selfie_status,
+            "signature_status":more.signature_status
         })
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)

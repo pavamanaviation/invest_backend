@@ -1253,6 +1253,21 @@ def upload_pdf_document(request):
     customer = get_object_or_404(CustomerRegister, id=customer_id)
     kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
     more,_=CustomerMoreDetails.objects.get_or_create(customer=customer)
+    
+    # Check selfie/signature status before proceeding
+    if doc_type == 'selfie' and more.selfie_status == 1:
+        return JsonResponse({
+            "action": "view_only",
+            "message": "Selfie already submitted. View only allowed.",
+            "file_path": more.selfie_path
+        }, status=200)
+    elif doc_type == 'signature' and more.signature_status == 1:
+        return JsonResponse({
+            "action": "view_only",
+            "message": "Signature already submitted. View only allowed.",
+            "file_path": more.signature_path
+        }, status=200)
+    
     customer_name = f"{customer.first_name}_{customer.last_name}".replace(" ", "_").lower()
     customer_folder = f"{customer_id}_{customer_name}".lower()
     s3_filename = f"{customer_folder}/{doc_type}_{customer_name}{file_ext}"  # e.g., 1234_kapil_dev/aadhar.pdf or pan.jpg

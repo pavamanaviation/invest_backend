@@ -17,14 +17,24 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+from invest_app.views import (register_role,view_roles,delete_role,update_role,
+                              verify_otp)
+
 # from invest_app.views import check_indian_time 
 from invest_app.customer_views import (customer_register,verify_customer_otp,customer_register_sec_phase,
 customer_login,pan_verification_request_view, pan_verification_result_view,
 aadhar_lite_verification_view,bank_account_verification_view,customer_more_details,customer_profile_view,
-upload_pdf_document,nominee_details,create_drone_order,razorpay_callback
+upload_pdf_document,nominee_details,create_drone_order,razorpay_callback,payment_status_check
 )
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path('verify-otp', verify_otp, name='verify_otp'),
+    path('register-role', register_role, name='register_role'),
+    path('view-roles', view_roles,name='view_roles'), 
+    path('delete-role', delete_role, name='delete_role'),
+    path('update-role', update_role, name='update_role'),
+
+
     path('customer-register', customer_register, name='customer_register'),
     path('verify-customer-otp', verify_customer_otp, name='verify_customer_otp'),
     path('customer-register-sec-phase', customer_register_sec_phase, name='customer_register_sec_phase'),
@@ -39,4 +49,5 @@ urlpatterns = [
     path('nominee-details', nominee_details, name='nominee_details'),
     path('create-drone-order', create_drone_order, name='create_drone_order'),
     path('razorpay-callback', razorpay_callback, name='razorpay_callback'),
+    path('payment-status-check', payment_status_check, name='payment_status_check')
 ]

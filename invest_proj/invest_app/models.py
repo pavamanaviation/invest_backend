@@ -4,8 +4,8 @@ from django.utils import timezone
 from datetime import timedelta
 class Admin(models.Model):
     name = models.CharField(max_length=50)
-    email = models.EmailField(max_length=50, unique=True)
-    mobile_no = models.CharField(max_length=15, unique=True)
+    email = models.EmailField(max_length=50, unique=True,db_index=True)
+    mobile_no = models.CharField(max_length=15, unique=True,db_index=True)
     otp = models.IntegerField(null=True, blank=True)
     otp_send_type = models.CharField(max_length=50, null=True, blank=True)
     changed_on = models.DateTimeField(null=True, blank=True)
@@ -18,10 +18,10 @@ class Admin(models.Model):
 class Role(models.Model):
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
-    email = models.EmailField(max_length=50, unique=True)
+    email = models.EmailField(max_length=50, unique=True,db_index=True)
     # employee_id = models.CharField(max_length=15, unique=True)
     # password = models.CharField(max_length=255)
-    mobile_no = models.CharField(max_length=15, unique=True)
+    mobile_no = models.CharField(max_length=15, unique=True,db_index=True)
     company_name = models.CharField(max_length=50)
     role_type = models.CharField(max_length=50)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -39,8 +39,8 @@ class CustomerRegister(models.Model):
     role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)
     first_name = models.CharField(max_length=50)
     last_name = models.CharField(max_length=50)
-    email = models.EmailField(max_length=50,unique=True,null=True, blank=True)
-    mobile_no = models.CharField(max_length=15, default='')
+    email = models.EmailField(max_length=50,unique=True,null=True, blank=True,db_index=True)
+    mobile_no = models.CharField(max_length=15, default='',db_index=True)
     created_at =  models.DateTimeField(auto_now_add=True)
     
     otp = models.IntegerField(null=True, blank=True)
@@ -156,3 +156,4 @@ class PaymentDetails(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     status = models.CharField(max_length=20, default='created')  # created, paid, failed
     created_at = models.DateTimeField(auto_now_add=True)
+    payment_status= models.IntegerField(default=0)

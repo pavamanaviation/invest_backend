@@ -1506,19 +1506,18 @@ def send_nominee_email(customer, nominee_name, relation):
     except Exception as e:
         print("Email sending failed:", e)
         return False
-    
 @csrf_exempt
 def create_drone_order(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Only POST allowed'}, status=405)
-    
+
     try:
         data = json.loads(request.body)
         customer_id = data.get('customer_id')
         email = data.get('email')
-        price = data.get('price')  # e.g. 1200000
-        
-        if not all([customer_id, email, price]):
+        total_price = float(data.get('price'))  # Should be 1200000
+
+        if not all([customer_id, email, total_price]):
             return JsonResponse({'error': 'Missing required fields'}, status=400)
 
         customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
@@ -1527,43 +1526,55 @@ def create_drone_order(request):
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
-        amount_paise = int(float(price) * 100)  # Razorpay works in paise
+        # Split into parts (₹5L, ₹5L, ₹2L)
+        parts = [500000, 500000, 200000]  # rupees
+        response_list = []
 
-        razorpay_order = client.order.create({
-            'amount': amount_paise,
-            'currency': 'INR',
-            'payment_capture': 1,
-            'notes': {
-                'customer_id': str(customer_id),
-                'email': email
-            }
-        })
+        for idx, part in enumerate(parts, start=1):
+            amount_paise = int(part * 100)
+            order = client.order.create({
+                'amount': amount_paise,
+                'currency': 'INR',
+                'payment_capture': 1,
+                'notes': {
+                    'customer_id': str(customer_id),
+                    'email': email,
+                    'part': str(idx)
+                }
+            })
 
-        # Optional: Store this order in DB
-        PaymentDetails.objects.create(
-            customer=customer,
-            razorpay_order_id=razorpay_order['id'],
-            amount=price,
-            status='created'
-        )
+            # Save in DB
+            PaymentDetails.objects.create(
+                customer=customer,
+                razorpay_order_id=order['id'],
+                amount=part,
+                part_number=idx,
+                status='created'
+            )
+
+            response_list.append({
+                'order_id': order['id'],
+                'razorpay_key': settings.RAZORPAY_KEY_ID,
+                'amount': part,
+                'currency': 'INR',
+                'email': email,
+                'part_number': idx
+            })
 
         return JsonResponse({
-            'order_id': razorpay_order['id'],
-            'razorpay_key': settings.RAZORPAY_KEY_ID,
-            'amount': price,
-            'currency': 'INR',
-            'email': email
+            'message': 'Split Razorpay orders created successfully',
+            'orders': response_list
         })
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-
 @csrf_exempt
 def razorpay_callback(request):
     try:
         payload = request.body
         signature = request.headers.get('X-Razorpay-Signature')
 
+        # Verify signature
         expected_signature = hmac.new(
             settings.RAZORPAY_WEBHOOK_SECRET.encode(),
             msg=payload,
@@ -1577,16 +1588,112 @@ def razorpay_callback(request):
         event = data.get('event')
         
         if event == 'payment.captured':
-            razorpay_order_id = data['payload']['payment']['entity']['order_id']
             payment_entity = data['payload']['payment']['entity']
+            razorpay_order_id = payment_entity['order_id']
+            payment_id = payment_entity['id']
 
+            # Get the corresponding payment part (1/2/3)
             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-            if payment:
+
+            if payment and payment.status != 'paid':
                 payment.status = 'paid'
-                payment.razorpay_payment_id = payment_entity['id']
+                payment.razorpay_payment_id = payment_id
                 payment.save()
+
+                # Optional: Check if all 3 parts paid
+                all_paid = PaymentDetails.objects.filter(
+                    customer=payment.customer, status='paid'
+                ).count()
+
+                if all_paid == 3:
+                    # You can trigger confirmation, delivery, etc.
+                    print("Full ₹12L drone payment completed.")
 
         return HttpResponse(status=200)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+# @csrf_exempt
+# def create_drone_order(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+    
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.get('customer_id')
+#         email = data.get('email')
+#         price = data.get('price')  # e.g. 1200000
+        
+#         if not all([customer_id, email, price]):
+#             return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+#         customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
+#         if not customer:
+#             return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+#         amount_paise = int(float(price) * 100)  # Razorpay works in paise
+
+#         razorpay_order = client.order.create({
+#             'amount': amount_paise,
+#             'currency': 'INR',
+#             'payment_capture': 1,
+#             'notes': {
+#                 'customer_id': str(customer_id),
+#                 'email': email
+#             }
+#         })
+
+#         # Optional: Store this order in DB
+#         PaymentDetails.objects.create(
+#             customer=customer,
+#             razorpay_order_id=razorpay_order['id'],
+#             amount=price,
+#             status='created'
+#         )
+
+#         return JsonResponse({
+#             'order_id': razorpay_order['id'],
+#             'razorpay_key': settings.RAZORPAY_KEY_ID,
+#             'amount': price,
+#             'currency': 'INR',
+#             'email': email
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+
+# @csrf_exempt
+# def razorpay_callback(request):
+#     try:
+#         payload = request.body
+#         signature = request.headers.get('X-Razorpay-Signature')
+
+#         expected_signature = hmac.new(
+#             settings.RAZORPAY_WEBHOOK_SECRET.encode(),
+#             msg=payload,
+#             digestmod=hashlib.sha256
+#         ).hexdigest()
+
+#         if signature != expected_signature:
+#             return JsonResponse({'error': 'Invalid signature'}, status=400)
+
+#         data = json.loads(payload)
+#         event = data.get('event')
+        
+#         if event == 'payment.captured':
+#             razorpay_order_id = data['payload']['payment']['entity']['order_id']
+#             payment_entity = data['payload']['payment']['entity']
+
+#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
+#             if payment:
+#                 payment.status = 'paid'
+#                 payment.razorpay_payment_id = payment_entity['id']
+#                 payment.save()
+
+#         return HttpResponse(status=200)
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)

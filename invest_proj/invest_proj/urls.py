@@ -21,7 +21,7 @@ from django.urls import path
 from invest_app.customer_views import (customer_register,verify_customer_otp,customer_register_sec_phase,
 customer_login,pan_verification_request_view, pan_verification_result_view,
 aadhar_lite_verification_view,bank_account_verification_view,customer_more_details,customer_profile_view,
-upload_pdf_document,nominee_details
+upload_pdf_document,nominee_details,create_drone_order,razorpay_callback
 )
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -37,4 +37,6 @@ urlpatterns = [
     path('customer-profile', customer_profile_view, name='customer_profile'),
     path('upload-pdf-document', upload_pdf_document, name='upload_pdf_document'),
     path('nominee-details', nominee_details, name='nominee_details'),
+    path('create-drone-order', create_drone_order, name='create_drone_order'),
+    path('razorpay-callback', razorpay_callback, name='razorpay_callback'),
 ]

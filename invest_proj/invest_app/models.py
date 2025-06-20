@@ -141,6 +141,16 @@ class NomineeDetails(models.Model):
     id_proof = models.CharField(max_length=50, null=True, blank=True)  # e.g., "Aadhar", "PAN", etc.
     id_proof_path = models.CharField(max_length=250, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-
+    nominee_status= models.IntegerField(default=0)
     def __str__(self):
         return f"Nominee for {self.customer.email}" if self.customer else "Nominee Details"
+class PaymentDetails(models.Model):
+    customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
+    role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)    
+    razorpay_order_id = models.CharField(max_length=100)
+    razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
+    payment_mode = models.CharField(max_length=40,default='card')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, default='created')  # created, paid, failed
+    created_at = models.DateTimeField(auto_now_add=True)

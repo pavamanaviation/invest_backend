@@ -33,6 +33,7 @@ from .idfy_verification import (
 )
 
 from django.db.models import Sum,Max
+from .msg91 import send_bulk_sms
 
 def get_indian_time():
     india_tz = pytz.timezone('Asia/Kolkata')
@@ -134,7 +135,8 @@ def customer_register(request):
             if email:
                 send_otp_email(email, first_name, otp)
             if mobile_no:
-                send_otp_sms([mobile_no], f"Hi,This is your OTP for password reset on Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it with anyone.")
+                send_bulk_sms([mobile_no],otp)
+                # send_otp_sms([mobile_no], f"Hi,This is your OTP for password reset on Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it with anyone.")
 
         return JsonResponse({
             "message": "Google account verified successfully." if is_google_signup else "OTP sent. Please verify to continue. The OTP is valid for 2 minutes.",
@@ -342,7 +344,8 @@ def customer_register_sec_phase(request):
                 return JsonResponse({"error": "Mobile number already in use."}, status=400)
             customer.mobile_no = mobile_no
             otp_send_type = 'Mobile'
-            send_otp_sms([mobile_no], f"Hi, This is your OTP for profile verification on Pavaman Aviation: {otp}. Valid for 2 minutes.")
+            send_bulk_sms([mobile_no],otp)
+            # send_otp_sms([mobile_no], f"Hi, This is your OTP for profile verification on Pavaman Aviation: {otp}. Valid for 2 minutes.")
             otp_sent = True
             update_fields.append('mobile_no')
         # New mobile provided (only if mobile not used in phase 1)
@@ -362,7 +365,8 @@ def customer_register_sec_phase(request):
                 otp_send_type = 'Email'
                 otp_sent = True
             elif customer.otp_send_type == 'Mobile' and customer.mobile_no:
-                send_otp_sms([customer.mobile_no], f"Hi, This is your OTP for profile verification on Pavaman Aviation: {otp}. Valid for 2 minutes.")
+                send_bulk_sms([customer.mobile_no],otp)
+                # send_otp_sms([customer.mobile_no], f"Hi, This is your OTP for profile verification on Pavaman Aviation: {otp}. Valid for 2 minutes.")
                 otp_send_type = 'Mobile'
                 otp_sent = True
             else:
@@ -406,7 +410,7 @@ def customer_register_sec_phase(request):
 
 def send_otp_email(email, first_name, otp):
     subject = "[Pavaman] Please Verify Your Email"
-    logo_url = f"{settings.AWS_S3_BUCKET_URL}/static/images/aviation-logo.png"
+    logo_url = f"{settings.AWS_S3_BUCKET_URL}/aviation-logo.png"
 
     text_content = f"""
     Hello {first_name},
@@ -618,7 +622,8 @@ def customer_login(request):
             if email:
                 send_otp_email(email, customer.first_name or first_name, otp)
             if mobile_no:
-                send_otp_sms([mobile_no], f"Hi, this is your OTP for login to Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it.")
+                send_bulk_sms([mobile_no],otp)
+                # send_otp_sms([mobile_no], f"Hi, this is your OTP for login to Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it.")
 
             return JsonResponse({
                 "message": "OTP sent for customer login. It is valid for 2 minutes.",
@@ -643,7 +648,8 @@ def customer_login(request):
             if email:
                 send_otp_email(email, admin.name, otp)
             if mobile_no:
-                send_otp_sms([mobile_no], f"Hi Admin {admin.name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
+                send_bulk_sms([mobile_no],otp)
+                # send_otp_sms([mobile_no], f"Hi Admin {admin.name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
 
             return JsonResponse({
                 "message": "OTP sent for admin login. It is valid for 2 minutes.",
@@ -670,7 +676,8 @@ def customer_login(request):
             if email:
                 send_otp_email(email, full_name, otp)
             if mobile_no:
-                send_otp_sms([mobile_no], f"Hi {full_name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
+                send_bulk_sms([mobile_no],otp)
+                # send_otp_sms([mobile_no], f"Hi {full_name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
 
             return JsonResponse({
                 "message": "OTP sent for employee login. It is valid for 2 minutes.",
@@ -1484,145 +1491,282 @@ def upload_file_to_s3(file_obj, s3_key):
         }
     )
     return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
+
 @csrf_exempt
-def nominee_details(request):
+def initiate_nominee_registration(request):
     if request.method == "POST":
-        try:            
-            # data = json.loads(request.body)
-            # customer_id = request.POST.get('customer_id')
-            if request.content_type.startswith('application/json'):
-                data = json.loads(request.body)
-                customer_id = data.get('customer_id')
-            else:
-                customer_id = request.POST.get('customer_id')
-            session_customer_id = request.session.get('customer_id')
+        try:
+            data = request.POST
+            files = request.FILES
 
-            print("Session customer_id:", request.session.get('customer_id'))
-            print("Posted customer_id:", request.POST.get('customer_id'))
+            customer_id = data.get("customer_id")
+            session_customer_id = request.session.get("customer_id")
+            if not customer_id and int(customer_id) != int(session_customer_id):
+                return JsonResponse({"error": "Customer ID mismatch."}, status=403)
 
-            if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-                    return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-    
-            # customer_id = request.session.get('customer_id')  # Use session
-            # if not customer_id:
-            #     return JsonResponse({"error": "Customer not logged in."}, status=401)
-            customer = get_object_or_404(CustomerRegister, id=customer_id)
-            nominee = NomineeDetails.objects.filter(customer=customer).first()
+            required_fields = ["first_name", "last_name", "relation", "dob", "address_proof"]
+            for field in required_fields:
+                if not data.get(field):
+                    return JsonResponse({"error": f"{field} is required."}, status=400)
 
-            # View-only if nominee exists
-            if nominee and nominee.nominee_status == 1:
-                return JsonResponse({
-                    "action": "view_only",
-                    "message": "Nominee already registered.",
-                    "nominee_id": nominee.id,
-                    "first_name": nominee.first_name,
-                    "last_name": nominee.last_name,
-                    "relation": nominee.relation,
-                    "nominee_status": nominee.nominee_status,
-                }, status=200)
+            nominee_data = {
+                "first_name": data.get("first_name"),
+                "last_name": data.get("last_name"),
+                "relation": data.get("relation"),
+                "dob": data.get("dob"),
+                "address_proof": data.get("address_proof"),
+                # "address_proof_path":data.get
+            }
 
-            first_name = request.POST.get('first_name')
-            last_name = request.POST.get('last_name')
-            relation = request.POST.get('relation')
-            dob_str = request.POST.get('dob')
-            dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
-            address_proof = request.POST.get('address_proof')
-            # id_proof = request.POST.get('id_proof')
+            request.session['nominee_data'] = nominee_data
+            request.session['nominee_address_file_name'] = files['address_proof_file'].name if 'address_proof_file' in files else ""
+            request.session['nominee_id_file_name'] = files['id_proof_file'].name if 'id_proof_file' in files else ""
 
-            address_proof_file = request.FILES.get('address_proof_file')
-            id_proof_file = request.FILES.get('id_proof_file')
+            request.session['nominee_files'] = {
+                'address_proof_file': files['address_proof_file'].read().decode('latin1') if 'address_proof_file' in files else "",
+                'id_proof_file': files['id_proof_file'].read().decode('latin1') if 'id_proof_file' in files else ""
+            }
 
-            if not all([customer_id, first_name, last_name, relation, dob, address_proof]):
-                return JsonResponse({"error": "All fields are required."}, status=400)
-            # Allowed formats
-            allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
-            allowed_mime_types = ['application/pdf', 'image/jpeg', 'image/png']
+            otp = generate_otp()
+            request.session['nominee_otp'] = str(otp)
+            request.session['nominee_otp_verified'] = False
 
-            customer = get_object_or_404(CustomerRegister, id=customer_id)
-            mobile_no=customer.mobile_no
-            nominee_name = f"{first_name}{last_name}".replace(" ", "")
-            customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
-            folder_name = f"{customer.id}_{customer_name}"
-             # Upload address proof
-            if address_proof_file:
-                file_name = address_proof_file.name
-                file_root, file_ext = os.path.splitext(file_name)
-                file_ext = file_ext.lower()
-                mime_type, _ = mimetypes.guess_type(file_name)
+            customer = CustomerRegister.objects.get(id=customer_id)
+            # print(customer.mobile_no)
+            # send_otp_sms("+918885030341", f"Your nominee OTP is {otp}")
+            send_bulk_sms(customer.mobile_no,otp)
 
-                if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
-                    return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for address proof.'}, status=400)
+            return JsonResponse({"message": "OTP sent to registered mobile."})
 
-                s3_key = f"{folder_name}/nominee_address_proof_{nominee_name}{file_ext}"
-                address_proof_path_s3_url= upload_file_to_s3(address_proof_file, s3_key)
-                address_proof_path=s3_key
-
-            # Upload ID proof
-            if id_proof_file:
-                file_name = id_proof_file.name
-                file_root, file_ext = os.path.splitext(file_name)
-                file_ext = file_ext.lower()
-                mime_type, _ = mimetypes.guess_type(file_name)
-
-                if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
-                    return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for ID proof.'}, status=400)
-
-                s3_key = f"{folder_name}/nominee_id_proof_{nominee_name}{file_ext}"
-                id_proof_path_s3_url=upload_file_to_s3(id_proof_file, s3_key)
-                id_proof_path = s3_key
-
-            nominee, created = NomineeDetails.objects.update_or_create(
-                customer=customer,
-                defaults={
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "relation": relation,
-                    "dob": dob,
-                    "address_proof": address_proof,
-                    "address_proof_path": address_proof_path,
-                    "id_proof_path": id_proof_path,
-                    "nominee_status":1
-                }
-            )
-            #Send SMS inside this function
-            try:
-                message = f"Dear {customer.first_name}, your nominee {first_name} {last_name} has been successfully registered."
-                # client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-                send_otp_sms(mobile_no,message)
-                # print(f"SMS sent: {sms.sid}")
-            except Exception as sms_err:
-                print("SMS sending failed:", sms_err)
-
-            #Send Email using helper
-            # send_nominee_email(customer, f"{first_name} {last_name}", relation)
-            send_nominee_email(customer, nominee_name, relation)
-            return JsonResponse({
-                "action": "add_details",
-                "message": "Nominee details saved successfully.",
-                "nominee_id": nominee.id,
-                "first_name": nominee.first_name,
-                "last_name": nominee.last_name,
-                "relation": nominee.relation,
-                "dob": nominee.dob.strftime("%Y-%m-%d") if nominee.dob else None,
-                "address_proof": nominee.address_proof,
-                "address_proof_path": address_proof_path_s3_url,
-                "id_proof_path": id_proof_path_s3_url,
-                "nominee_status":nominee.nominee_status
-            }, status=200)
-
-        except json.JSONDecodeError:
-            return JsonResponse({"error": "Invalid JSON."}, status=400)
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
-# def send_otp_sms(customer, nominee_name):
-#     try:
-#         message = f"Dear {customer.first_name}, your nominee {nominee_name} has been successfully registered."
-#         mobile_nos = [customer.mobile_no]  # Ensure it's in list form
-#         send_otp_sms(mobile_nos, message)
-#         return True
-#     except Exception as e:
-#         print("SMS sending failed:", e)
-#         return False
+from io import BytesIO
+import base64
+@csrf_exempt
+def verify_and_save_nominee(request):
+    if request.method == "POST":
+        try:
+            data = request.POST
+            otp = data.get("otp")
+            customer_id = data.get("customer_id")
+
+            session_customer_id = request.session.get("customer_id")
+            if not customer_id and int(customer_id) != int(session_customer_id):
+                return JsonResponse({"error": "Invalid or unauthorized request."}, status=403)
+            if not otp:
+                return JsonResponse({"error": "OTP is required."}, status=403)
+            if otp != request.session.get("nominee_otp"):
+                return JsonResponse({"error": "Invalid OTP."}, status=400)
+
+            nominee_data = request.session.get("nominee_data")
+            if not nominee_data:
+                return JsonResponse({"error": "Session expired. Please refill nominee form."}, status=400)
+
+            customer = CustomerRegister.objects.get(id=customer_id)
+
+            # Extract nominee fields
+            first_name = nominee_data['first_name']
+            last_name = nominee_data['last_name']
+            relation = nominee_data['relation']
+            dob = datetime.strptime(nominee_data['dob'], "%Y-%m-%d").date()
+            address_proof = nominee_data['address_proof']
+
+            # File names
+            address_file_name = request.session.get("nominee_address_file_name", "")
+            id_file_name = request.session.get("nominee_id_file_name", "")
+            address_file_data = request.session['nominee_files']['address_proof_file'].encode('latin1')
+            id_file_data = request.session['nominee_files']['id_proof_file'].encode('latin1')
+
+            # -----------------------
+            # Naming as per your logic
+            customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
+            nominee_name = f"{first_name}{last_name}".replace(" ", "")
+            folder_name = f"{customer.id}_{customer_name}"
+
+            address_ext = os.path.splitext(address_file_name)[1].lower()
+            id_ext = os.path.splitext(id_file_name)[1].lower()
+
+            address_key = f"customerdoc/{folder_name}/nominee_address_proof_{nominee_name}{address_ext}"
+            id_key = f"customerdoc/{folder_name}/nominee_id_proof_{nominee_name}{id_ext}"
+
+            address_url = upload_file_to_s3(BytesIO(address_file_data), address_key)
+            id_url = upload_file_to_s3(BytesIO(id_file_data), id_key)
+            # -----------------------
+            if NomineeDetails.objects.filter(
+                customer=customer,
+                first_name=first_name,
+                last_name=last_name,
+                relation=relation,
+                nominee_status=1
+            ).exists():
+                return JsonResponse({"error": "This nominee already exists for the customer."}, status=409)
+
+            nominee = NomineeDetails.objects.create(
+                customer=customer,
+                first_name=first_name,
+                last_name=last_name,
+                relation=relation,
+                dob=dob,
+                address_proof=address_proof,
+                address_proof_path=address_key,
+                id_proof_path=id_key,
+                nominee_status=1
+            )
+
+            # Clear session data
+            for key in ['nominee_otp', 'nominee_data', 'nominee_otp_verified', 'nominee_address_file_name', 'nominee_id_file_name', 'nominee_files']:
+                if key in request.session:
+                    del request.session[key]
+
+            return JsonResponse({
+                "message": "Nominee saved successfully.",
+                "nominee_id": nominee.id
+            })
+
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)
+
+# @csrf_exempt
+# def nominee_details(request):
+    # if request.method == "POST":
+    #     try:            
+    #         # data = json.loads(request.body)
+    #         # customer_id = request.POST.get('customer_id')
+    #         if request.content_type.startswith('application/json'):
+    #             data = json.loads(request.body)
+    #             customer_id = data.get('customer_id')
+    #         else:
+    #             customer_id = request.POST.get('customer_id')
+    #         session_customer_id = request.session.get('customer_id')
+
+    #         print("Session customer_id:", request.session.get('customer_id'))
+    #         print("Posted customer_id:", request.POST.get('customer_id'))
+
+    #         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+    #                 return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+    
+    #         # customer_id = request.session.get('customer_id')  # Use session
+    #         # if not customer_id:
+    #         #     return JsonResponse({"error": "Customer not logged in."}, status=401)
+    #         customer = get_object_or_404(CustomerRegister, id=customer_id)
+    #         nominee = NomineeDetails.objects.filter(customer=customer).first()
+
+    #         # View-only if nominee exists
+    #         if nominee and nominee.nominee_status == 1:
+    #             return JsonResponse({
+    #                 "action": "view_only",
+    #                 "message": "Nominee already registered.",
+    #                 "nominee_id": nominee.id,
+    #                 "first_name": nominee.first_name,
+    #                 "last_name": nominee.last_name,
+    #                 "relation": nominee.relation,
+    #                 "nominee_status": nominee.nominee_status,
+    #             }, status=200)
+
+    #         first_name = request.POST.get('first_name')
+    #         last_name = request.POST.get('last_name')
+    #         relation = request.POST.get('relation')
+    #         dob_str = request.POST.get('dob')
+    #         dob = datetime.strptime(dob_str, "%Y-%m-%d").date() if dob_str else None
+    #         address_proof = request.POST.get('address_proof')
+    #         # id_proof = request.POST.get('id_proof')
+
+    #         address_proof_file = request.FILES.get('address_proof_file')
+    #         id_proof_file = request.FILES.get('id_proof_file')
+
+    #         if not all([customer_id, first_name, last_name, relation, dob, address_proof]):
+    #             return JsonResponse({"error": "All fields are required."}, status=400)
+    #         # Allowed formats
+    #         allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
+    #         allowed_mime_types = ['application/pdf', 'image/jpeg', 'image/png']
+
+    #         customer = get_object_or_404(CustomerRegister, id=customer_id)
+    #         mobile_no=customer.mobile_no
+    #         nominee_name = f"{first_name}{last_name}".replace(" ", "")
+    #         customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
+    #         folder_name = f"{customer.id}_{customer_name}"
+    #          # Upload address proof
+    #         if address_proof_file:
+    #             file_name = address_proof_file.name
+    #             file_root, file_ext = os.path.splitext(file_name)[1].lower()
+    #             # file_ext = file_ext.lower()
+    #             mime_type, _ = mimetypes.guess_type(file_name)
+
+    #             if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
+    #                 return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for address proof.'}, status=400)
+
+    #             s3_key = f"{folder_name}/nominee_address_proof_{nominee_name}{file_ext}"
+    #             address_proof_path_s3_url= upload_file_to_s3(address_proof_file, s3_key)
+    #             address_proof_path=s3_key
+
+    #         # Upload ID proof
+    #         if id_proof_file:
+    #             file_name = id_proof_file.name
+    #             file_root,  file_ext = os.path.splitext(file_name)[1].lower()
+    #             # file_ext = file_ext.lower()
+    #             mime_type, _ = mimetypes.guess_type(file_name)
+
+    #             if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
+    #                 return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed for ID proof.'}, status=400)
+
+    #             s3_key = f"{folder_name}/nominee_id_proof_{nominee_name}{file_ext}"
+    #             id_proof_path_s3_url=upload_file_to_s3(id_proof_file, s3_key)
+    #             id_proof_path = s3_key
+
+    #         nominee, created = NomineeDetails.objects.update_or_create(
+    #             customer=customer,
+    #             first_name=first_name,
+    #             last_name=last_name,
+    #             relation=relation,
+    #             defaults={
+    #                 "dob": dob,
+    #                 "address_proof": address_proof,
+    #                 "address_proof_path": address_proof_path,
+    #                 "id_proof_path": id_proof_path,
+    #                 "nominee_status": 1
+    #             }
+    #             # defaults={
+    #             #     "first_name": first_name,
+    #             #     "last_name": last_name,
+    #             #     "relation": relation,
+    #             #     "dob": dob,
+    #             #     "address_proof": address_proof,
+    #             #     "address_proof_path": address_proof_path,
+    #             #     "id_proof_path": id_proof_path,
+    #             #     "nominee_status":1
+    #             # }
+    #         )
+    #         #Send SMS inside this function
+    #         # try:
+    #         #     message = f"Dear {customer.first_name}, your nominee {first_name} {last_name} has been successfully registered."
+    #         #     # client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+    #         #     send_otp_sms(mobile_no,message)
+    #         #     # print(f"SMS sent: {sms.sid}")
+    #         # except Exception as sms_err:
+    #         #     print("SMS sending failed:", sms_err)
+
+    #         # #Send Email using helper
+    #         # # send_nominee_email(customer, f"{first_name} {last_name}", relation)
+    #         # send_nominee_email(customer, nominee_name, relation)
+    #         return JsonResponse({
+    #             "action": "add_details",
+    #             "message": "Nominee details saved successfully.",
+    #             "nominee_id": nominee.id,
+    #             "first_name": nominee.first_name,
+    #             "last_name": nominee.last_name,
+    #             "relation": nominee.relation,
+    #             "dob": nominee.dob.strftime("%Y-%m-%d") if nominee.dob else None,
+    #             "address_proof": nominee.address_proof,
+    #             "address_proof_path": address_proof_path_s3_url,
+    #             "id_proof_path": id_proof_path_s3_url,
+    #             "nominee_status":nominee.nominee_status
+    #         }, status=200)
+
+    #     except json.JSONDecodeError:
+    #         return JsonResponse({"error": "Invalid JSON."}, status=400)
+    #     except Exception as e:
+    #         return JsonResponse({"error": str(e)}, status=500)
+
 
 def send_nominee_email(customer, nominee_name, relation):
     try:
@@ -1630,7 +1774,7 @@ def send_nominee_email(customer, nominee_name, relation):
         from_email = settings.DEFAULT_FROM_EMAIL
         to_email = [customer.email]
 
-        logo_url = f"{settings.AWS_S3_BUCKET_URL}/static/images/aviation-logo.png"
+        logo_url = f"{settings.AWS_S3_BUCKET_URL}/aviation-logo.png"
         text_content = f"""
     Hello {customer.first_name},
     """

@@ -18,13 +18,14 @@ from django.contrib import admin
 from django.urls import path
 
 from invest_app.views import (register_role,view_roles,delete_role,update_role,
-                              verify_otp)
+                              verify_otp,admin_customer_details,admin_customer_kyc_details)
 
 # from invest_app.views import check_indian_time 
 from invest_app.customer_views import (customer_register,verify_customer_otp,customer_register_sec_phase,
 customer_login,pan_verification_request_view, pan_verification_result_view,
 aadhar_lite_verification_view,bank_account_verification_view,customer_more_details,customer_profile_view,
-upload_pdf_document,nominee_details,create_drone_order,razorpay_callback,payment_status_check
+upload_pdf_document,verify_and_save_nominee,create_drone_order,razorpay_callback,payment_status_check,
+initiate_nominee_registration,
 )
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -33,6 +34,10 @@ urlpatterns = [
     path('view-roles', view_roles,name='view_roles'), 
     path('delete-role', delete_role, name='delete_role'),
     path('update-role', update_role, name='update_role'),
+
+
+    path('admin-customer-details',admin_customer_details,name='admin_customer_details'),
+    path('admin-customer-kyc-details',admin_customer_kyc_details,name='admin_customer_kyc_details'),
 
 
     path('customer-register', customer_register, name='customer_register'),
@@ -46,7 +51,9 @@ urlpatterns = [
     path('customer-more-details', customer_more_details, name='customer_more_details'),
     path('customer-profile', customer_profile_view, name='customer_profile'),
     path('upload-pdf-document', upload_pdf_document, name='upload_pdf_document'),
-    path('nominee-details', nominee_details, name='nominee_details'),
+    path('nominee-details', verify_and_save_nominee, name='verify_and_save_nominee'),
+    path('initiate_nominee_registration',initiate_nominee_registration, name='initiate_nominee_registration'),
+
     path('create-drone-order', create_drone_order, name='create_drone_order'),
     path('razorpay-callback', razorpay_callback, name='razorpay_callback'),
     path('payment-status-check', payment_status_check, name='payment_status_check')

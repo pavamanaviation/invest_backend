@@ -272,3 +272,142 @@ def update_role(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+from .models import Admin, CustomerRegister,Role,CustomerMoreDetails,KYCDetails
+from django.conf import settings
+def format_customer_data(customer):
+    more = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+    address_parts = [more.address, more.city, more.mandal, more.district, more.state, more.pincode] if more else []
+    address = ", ".join(part for part in address_parts if part)
+
+    return {
+        "customer_id": customer.id,
+        "name": f"{customer.first_name} {customer.last_name}".strip(),
+        "email": customer.email,
+        "mobile_no": customer.mobile_no,
+        "register_type": customer.register_type,
+        "register_status": customer.register_status,
+        "account_status": customer.account_status,
+        "created_at": customer.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "dob": more.dob.strftime("%Y-%m-%d") if more and more.dob else "",
+        "gender": more.gender if more else "",
+        "profession": more.profession if more else "",
+        "designation": more.designation if more else "",
+        "address": address,
+        "selfie": f"{settings.AWS_S3_BUCKET_URL}/{more.selfie_path}" if more and more.selfie_path else "",
+        "signature": f"{settings.AWS_S3_BUCKET_URL}/{more.signature_path}" if more and more.signature_path else "",
+    }
+
+
+@csrf_exempt
+def admin_customer_details(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        admin_id = data.get('admin_id')
+        action = data.get('action', 'view')
+        customer_id = data.get('customer_id')
+
+        if not admin_id:
+            return JsonResponse({'error': 'admin_id is required'}, status=400)
+
+        if action == "view":
+            customers = CustomerRegister.objects.filter(admin_id=admin_id).order_by("-created_at")
+            customer_details = [format_customer_data(customer) for customer in customers]
+
+            return JsonResponse({
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": len(customer_details),
+                "customers": customer_details
+            }, status=200)
+
+        elif action == "view_more" and customer_id:
+            try:
+                customer = CustomerRegister.objects.get(id=customer_id, admin_id=admin_id)
+                customer_data = format_customer_data(customer)
+
+                return JsonResponse({
+                    "status": "success",
+                    "status_code": 200,
+                    "admin_id": admin_id,
+                    "customer": customer_data
+                }, status=200)
+            except CustomerRegister.DoesNotExist:
+                return JsonResponse({"error": "Customer not found"}, status=404)
+
+        else:
+            return JsonResponse({'error': 'Invalid action or missing customer_id'}, status=400)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+def format_kyc_data(kyc):
+    s3_base_url = settings.AWS_S3_BUCKET_URL
+
+    return {
+        "customer_id": kyc.customer.id,
+        "email": kyc.customer.email,
+        "pan_number": kyc.pan_number,
+        "pan_status": kyc.pan_status,
+        "pan_path": f"{s3_base_url}/{kyc.pan_path}" if kyc.pan_path else "",
+
+        "aadhar_number": kyc.aadhar_number,
+        "aadhar_status": kyc.aadhar_status,
+        "aadhar_path": f"{s3_base_url}/{kyc.aadhar_path}" if kyc.aadhar_path else "",
+
+        "bank_account_number": kyc.banck_account_number,
+        "ifsc_code": kyc.ifsc_code,
+        "bank_status": kyc.bank_status,
+
+        "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+@csrf_exempt
+def admin_customer_kyc_details(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        action = data.get("action", "view")
+        admin_id = data.get("admin_id")  # required
+        customer_id = data.get("customer_id")
+
+        if not admin_id:
+            return JsonResponse({"error": "admin_id is required"}, status=400)
+
+        if action == "view":
+            kyc_records = KYCDetails.objects.all().order_by("-created_at")
+            kyc_list = [format_kyc_data(kyc) for kyc in kyc_records]
+
+            return JsonResponse({
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": len(kyc_list),
+                "kyc_list": kyc_list
+            }, status=200)
+
+        elif action == "view_more" and customer_id:
+            try:
+                kyc = KYCDetails.objects.get(customer_id=customer_id)
+                return JsonResponse({
+                    "status": "success",
+                    "status_code": 200,
+                    "admin_id": admin_id,
+                    "customer_id": customer_id,
+                    "kyc": format_kyc_data(kyc)
+                }, status=200)
+            except KYCDetails.DoesNotExist:
+                return JsonResponse({"error": "KYC not found for the given customer"}, status=404)
+
+        else:
+            return JsonResponse({"error": "Invalid action or missing customer_id"}, status=400)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

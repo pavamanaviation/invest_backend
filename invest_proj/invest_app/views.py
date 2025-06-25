@@ -7,9 +7,13 @@ from django.shortcuts import render
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
-from .models import Admin, CustomerRegister,Role
+from .models import Admin, CustomerRegister,Role,CustomerMoreDetails,KYCDetails,NomineeDetails
 from .sms_utils import send_otp_sms
 from django.contrib.auth.hashers import check_password
+from django.conf import settings
+from django.db.models import Q, Value
+from django.db.models.functions import Concat
+
 
 @csrf_exempt
 def verify_otp(request):
@@ -272,8 +276,6 @@ def update_role(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
-from .models import Admin, CustomerRegister,Role,CustomerMoreDetails,KYCDetails
-from django.conf import settings
 def format_customer_data(customer):
     more = CustomerMoreDetails.objects.filter(customer=customer).first()
 
@@ -299,6 +301,58 @@ def format_customer_data(customer):
     }
 
 
+# @csrf_exempt
+# def admin_customer_details(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         admin_id = data.get('admin_id')
+#         action = data.get('action', 'view')
+#         customer_id = data.get('customer_id')
+
+#         if not admin_id:
+#             return JsonResponse({'error': 'admin_id is required'}, status=400)
+
+#         if action == "view":
+#             customers = CustomerRegister.objects.filter(admin_id=admin_id).order_by("-created_at")
+#             customer_details = [format_customer_data(customer) for customer in customers]
+
+#             return JsonResponse({
+#                 "status": "success",
+#                 "status_code": 200,
+#                 "admin_id": admin_id,
+#                 "total_count": len(customer_details),
+#                 "customers": customer_details
+#             }, status=200)
+
+#         elif action == "view_more" and customer_id:
+#             try:
+#                 customer = CustomerRegister.objects.get(id=customer_id, admin_id=admin_id)
+#                 customer_data = format_customer_data(customer)
+
+#                 return JsonResponse({
+#                     "status": "success",
+#                     "status_code": 200,
+#                     "admin_id": admin_id,
+#                     "customer": customer_data
+#                 }, status=200)
+#             except CustomerRegister.DoesNotExist:
+#                 return JsonResponse({"error": "Customer not found"}, status=404)
+
+#         else:
+#             return JsonResponse({'error': 'Invalid action or missing customer_id'}, status=400)
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+
+from django.db.models import Q, Value
+from django.db.models.functions import Concat
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
+import json
+
 @csrf_exempt
 def admin_customer_details(request):
     if request.method != 'POST':
@@ -313,6 +367,7 @@ def admin_customer_details(request):
         if not admin_id:
             return JsonResponse({'error': 'admin_id is required'}, status=400)
 
+        # Handle viewing all customers
         if action == "view":
             customers = CustomerRegister.objects.filter(admin_id=admin_id).order_by("-created_at")
             customer_details = [format_customer_data(customer) for customer in customers]
@@ -325,6 +380,7 @@ def admin_customer_details(request):
                 "customers": customer_details
             }, status=200)
 
+        # Handle view_more
         elif action == "view_more" and customer_id:
             try:
                 customer = CustomerRegister.objects.get(id=customer_id, admin_id=admin_id)
@@ -339,6 +395,44 @@ def admin_customer_details(request):
             except CustomerRegister.DoesNotExist:
                 return JsonResponse({"error": "Customer not found"}, status=404)
 
+        # 🔍 Handle search
+        elif action == "search":
+            name = data.get('name', '').strip()
+            email = data.get('email', '').strip()
+            mobile_no = data.get('mobile_no', '').strip()
+            account_status = data.get('account_status', '').strip()
+
+            customers = CustomerRegister.objects.filter(admin_id=admin_id)
+
+            if name:
+                customers = customers.annotate(
+                    full_name=Concat('first_name', Value(' '), 'last_name')
+                ).filter(
+                    Q(first_name__icontains=name) |
+                    Q(last_name__icontains=name) |
+                    Q(full_name__icontains=name)
+                )
+
+            if email:
+                customers = customers.filter(email__icontains=email)
+
+            if mobile_no:
+                customers = customers.filter(mobile_no__icontains=mobile_no)
+
+            if account_status != "":
+                customers = customers.filter(account_status=int(account_status))
+
+            customers = customers.order_by("-created_at")
+            customer_details = [format_customer_data(customer) for customer in customers]
+
+            return JsonResponse({
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": len(customer_details),
+                "customers": customer_details
+            }, status=200)
+
         else:
             return JsonResponse({'error': 'Invalid action or missing customer_id'}, status=400)
 
@@ -346,12 +440,16 @@ def admin_customer_details(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
+
 def format_kyc_data(kyc):
     s3_base_url = settings.AWS_S3_BUCKET_URL
 
     return {
         "customer_id": kyc.customer.id,
+        "customer_fname": kyc.customer.first_name,
+        "customer_lname": kyc.customer.last_name,
         "email": kyc.customer.email,
+        "mobile":kyc.customer.mobile_no,
         "pan_number": kyc.pan_number,
         "pan_status": kyc.pan_status,
         "pan_path": f"{s3_base_url}/{kyc.pan_path}" if kyc.pan_path else "",
@@ -366,6 +464,11 @@ def format_kyc_data(kyc):
 
         "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S")
     }
+
+from django.db.models import Q, Value
+from django.db.models.functions import Concat
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
 
 @csrf_exempt
 def admin_customer_kyc_details(request):
@@ -406,8 +509,142 @@ def admin_customer_kyc_details(request):
             except KYCDetails.DoesNotExist:
                 return JsonResponse({"error": "KYC not found for the given customer"}, status=404)
 
+        elif action == "search":
+            name = data.get("name", "").strip()
+            mobile = data.get("mobile", "").strip()
+            pan = data.get("pan", "").strip()
+            aadhar = data.get("aadhar", "").strip()
+            bank_no = data.get("bank_account_number", "").strip()
+
+            kyc_records = KYCDetails.objects.select_related("customer")
+
+            if name:
+                kyc_records = kyc_records.annotate(
+                    full_name=Concat("customer__first_name", Value(" "), "customer__last_name")
+                ).filter(
+                    Q(customer__first_name__icontains=name) |
+                    Q(customer__last_name__icontains=name) |
+                    Q(full_name__icontains=name)
+                )
+
+            if mobile:
+                kyc_records = kyc_records.filter(customer__mobile_no__icontains=mobile)
+
+            if pan:
+                kyc_records = kyc_records.filter(pan_number__icontains=pan)
+
+            if aadhar:
+                kyc_records = kyc_records.filter(aadhar_number__icontains=aadhar)
+
+            if bank_no:
+                kyc_records = kyc_records.filter(banck_account_number__icontains=bank_no)
+
+            kyc_records = kyc_records.order_by("-created_at")
+            kyc_list = [format_kyc_data(kyc) for kyc in kyc_records]
+
+            return JsonResponse({
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": len(kyc_list),
+                "kyc_list": kyc_list
+            }, status=200)
+
         else:
             return JsonResponse({"error": "Invalid action or missing customer_id"}, status=400)
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
+
+
+@csrf_exempt
+def admin_nominee_details(request):
+    if request.method != "POST":
+        return JsonResponse({"status": "error", "error": "Only POST method is allowed."}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        admin_id = data.get("admin_id")
+        action = data.get("action")
+
+        if not admin_id or not action:
+            return JsonResponse({"status": "error", "error": "Missing required fields."}, status=400)
+
+        # Base queryset
+        queryset = NomineeDetails.objects.select_related("customer").filter(admin_id=admin_id)
+
+        if action == "view":
+            nominees = queryset
+
+        elif action == "view_more":
+            nominee_id = data.get("nominee_id")
+            if not nominee_id:
+                return JsonResponse({"status": "error", "error": "nominee_id is required."}, status=400)
+
+            nominee = queryset.filter(id=nominee_id).first()
+            if not nominee:
+                return JsonResponse({"status": "error", "error": "Nominee not found."}, status=404)
+
+            return JsonResponse({
+                "status": "success",
+                "nominee": {
+                    "id": nominee.id,
+                    "first_name": nominee.first_name,
+                    "last_name": nominee.last_name,
+                    "relation": nominee.relation,
+                    "dob": nominee.dob,
+                    "address_proof": nominee.address_proof,
+                    "address_proof_path": nominee.address_proof_path,
+                    "id_proof": nominee.id_proof,
+                    "id_proof_path": nominee.id_proof_path,
+                    "nominee_status": nominee.nominee_status,
+                    "created_at": nominee.created_at,
+                    "customer_name": f"{nominee.customer.first_name or ''} {nominee.customer.last_name or ''}".strip(),
+                    "customer_email": nominee.customer.email,
+                    "customer_mobile": nominee.customer.mobile_no,
+                }
+            })
+
+        elif action == "search":
+            filters = Q(admin_id=admin_id)
+            if data.get("name"):
+                filters &= (Q(first_name__icontains=data["name"]) | Q(last_name__icontains=data["name"]))
+            if data.get("email"):
+                filters &= Q(customer__email__icontains=data["email"])
+            if data.get("mobile_no"):
+                filters &= Q(customer__mobile_no__icontains=data["mobile_no"])
+            if data.get("relation"):
+                filters &= Q(relation__icontains=data["relation"])
+
+            nominees = queryset.filter(filters)
+
+        else:
+            return JsonResponse({"status": "error", "error": "Invalid action provided."}, status=400)
+
+        nominee_list = [
+            {
+                "id": n.id,
+                "first_name": n.first_name,
+                "last_name": n.last_name,
+                "relation": n.relation,
+                "dob": n.dob,
+                "address_proof": n.address_proof,
+                "id_proof": n.id_proof,
+                "nominee_status": n.nominee_status,
+                "created_at": n.created_at,
+                "customer_name": f"{n.customer.first_name or ''} {n.customer.last_name or ''}".strip(),
+                "customer_email": n.customer.email,
+                "customer_mobile": n.customer.mobile_no
+            }
+            for n in nominees
+        ]
+
+        return JsonResponse({
+            "status": "success",
+            "nominees": nominee_list,
+            "total_count": len(nominee_list)
+        })
+
+    except Exception as e:
+        return JsonResponse({"status": "error", "error": str(e)}, status=500)

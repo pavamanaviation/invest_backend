@@ -2,7 +2,34 @@
 import requests
 from django.conf import settings
 
-def send_pan_verification_request(pan_number,full_name,dob, task_id):
+# def send_pan_verification_request(pan_number,full_name,dob, task_id):
+#     url = settings.IDFY_PAN_VERIFY_URL
+#     headers = {
+#         "Content-Type": "application/json",
+#         "account-id": settings.IDFY_TEST_ACCOUNT_ID,
+#         "api-key": settings.IDFY_TEST_API_KEY,
+#     }
+
+#     payload = {
+#         "task_id": task_id,
+#         "group_id": settings.IDFY_TEST_GROUP_ID,
+#         "data": {
+#             "id_number": pan_number,
+#             "full_name":full_name,
+#             "dob": dob,  # Format: YYYY-MM-DD
+#             # "consent": "Y"
+#         }
+#     }
+
+#     try:
+#         response = requests.post(url, headers=headers, json=payload)
+#         return response.json()
+#     except Exception as e:
+#         return {"error": str(e)}
+# pan_utils.py
+import httpx
+from asgiref.sync import sync_to_async
+async def send_pan_verification_request(pan_number, full_name, dob, task_id):
     url = settings.IDFY_PAN_VERIFY_URL
     headers = {
         "Content-Type": "application/json",
@@ -15,17 +42,56 @@ def send_pan_verification_request(pan_number,full_name,dob, task_id):
         "group_id": settings.IDFY_TEST_GROUP_ID,
         "data": {
             "id_number": pan_number,
-            "full_name":full_name,
-            "dob": dob,  # Format: YYYY-MM-DD
-            # "consent": "Y"
+            "full_name": full_name,
+            "dob": dob
         }
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload)
-        return response.json()
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=payload)
+            return response.json()
     except Exception as e:
         return {"error": str(e)}
+import httpx
+import base64
+import uuid
+from django.conf import settings
+
+async def async_send_idfy_pan_ocr(file_bytes):
+    url = "https://eve.idfy.com/v3/tasks/async/verify_with_source/ocr_pan"  # ✅ Use sandbox
+
+    headers = {
+        "Content-Type": "application/json",
+        "account-id": settings.IDFY_TEST_ACCOUNT_ID,
+        "api-key": settings.IDFY_TEST_API_KEY
+    }
+
+    task_id = str(uuid.uuid4())
+
+    payload = {
+        "task_id": task_id,
+        # "group_id": settings.IDFY_TEST_GROUP_ID,
+        "data": {
+            "file": base64.b64encode(file_bytes).decode("utf-8"),
+            "document_type": "pan"
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=payload)
+            return {
+                "status_code": response.status_code,
+                "task_id": task_id,
+                "response": response.json()
+            }
+    except Exception as e:
+        return {
+            "status_code": 500,
+            "error": str(e)
+        }
+
 
 def get_pan_verification_result(request_id):
     url = f"https://eve.idfy.com/v3/tasks?request_id={request_id}"

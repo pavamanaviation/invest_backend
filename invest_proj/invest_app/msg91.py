@@ -21,4 +21,5 @@ def send_bulk_sms(mobile_number,otp):
     }
 
     response = requests.post(url, json=payload, headers=headers)
+    print(response)
     return response.json()

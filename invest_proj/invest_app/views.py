@@ -1,5 +1,5 @@
 from invest_app.utils.shared_imports import *
-from invest_proj.invest_app import apps
+from invest_app import apps
 from .models import Admin, CustomerRegister, KYCDetails, CustomerMoreDetails, NomineeDetails, PaymentDetails, Permission, Role
 from invest_app.utils.msg91 import send_bulk_sms
 

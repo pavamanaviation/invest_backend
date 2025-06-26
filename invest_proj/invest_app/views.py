@@ -877,10 +877,6 @@ def format_customer_data(customer, more):
         "signature": f"{settings.AWS_S3_BUCKET_URL}/{more.signature_path}" if more and more.signature_path else "",
     }
 
-from django.core.cache import cache
-from django.core.paginator import Paginator
-from django.views.decorators.csrf import csrf_exempt
-
 @csrf_exempt
 def admin_customer_details(request):
     if request.method != 'POST':

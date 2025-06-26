@@ -47,7 +47,7 @@ def generate_otp():
     return random.randint(100000, 999999)
 
 @csrf_exempt
-def customer_register(request):
+async def customer_register(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST allowed."}, status=405)
 
@@ -60,10 +60,12 @@ def customer_register(request):
         first_name = ''
         last_name = ''
         is_google_signup = False
+        otp = None
 
+        # Google Signup flow
         if token:
             google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
-            response = requests.get(google_url)
+            response = await sync_to_async(requests.get)(google_url)
 
             if response.status_code != 200:
                 return JsonResponse({"error": "Google token invalid."}, status=400)
@@ -80,70 +82,51 @@ def customer_register(request):
         if not email and not mobile_no:
             return JsonResponse({"error": "Provide email or mobile number."}, status=400)
 
-        customer = None
+        # Check if user already exists (disallow re-signup)
+        existing = None
         if email:
-            customer = CustomerRegister.objects.filter(email=email).first()
-        if not customer and mobile_no:
-            customer = CustomerRegister.objects.filter(mobile_no=mobile_no).first()
+            existing = await sync_to_async(lambda: CustomerRegister.objects.filter(email=email).exists())()
+        if not existing and mobile_no:
+            existing = await sync_to_async(lambda: CustomerRegister.objects.filter(mobile_no=mobile_no).exists())()
 
-        if customer:
-            if customer.register_status == 1 and customer.account_status == 1:
-                return JsonResponse({
-                    "message": "Account already verified. Please login to continue.",
-                    "customer_id": customer.id,
-                    "email": customer.email,
-                    "mobile_no": customer.mobile_no,
-                }, status=200)
+        if existing:
+            return JsonResponse({"error": "Customer already registered. Please login."}, status=409)
 
-            if customer.register_status == 1:
-                return JsonResponse({
-                    "message": "Account already verified. Please proceed to next step.",
-                    "customer_id": customer.id,
-                    "email": customer.email,
-                    "mobile_no": customer.mobile_no,
-                }, status=200)
-            
-            if is_google_signup:
-                customer.register_status = 1
-                customer.first_name = customer.first_name or first_name
-                customer.last_name = customer.last_name or last_name
-                customer.save(update_fields=['register_status', 'first_name', 'last_name'])
-            else:
-                otp = generate_otp()
-                customer.otp = otp
-                customer.changed_on = timezone.now()
-                customer.save(update_fields=['otp', 'changed_on'])
+        admin = await sync_to_async(lambda: Admin.objects.order_by("id").first())()
+        if not admin:
+            return JsonResponse({"error": "No admin found for assignment."}, status=500)
+
+        # Create new customer
+        if is_google_signup:
+            customer = await sync_to_async(CustomerRegister.objects.create)(
+                email=email or '',
+                mobile_no=mobile_no or '',
+                first_name=first_name or '',
+                last_name=last_name or '',
+                register_status=1,
+                register_type="Google",
+                admin=admin
+            )
         else:
-            if is_google_signup:
-                customer = CustomerRegister.objects.create(
-                    email=email or '',
-                    mobile_no=mobile_no or '',
-                    first_name=first_name or '',
-                    last_name=last_name or '',
-                    register_status=1,
-                    register_type="Google"
-                )
-            else:
-                otp = generate_otp()
-                customer = CustomerRegister.objects.create(
-                    email=email or '',
-                    mobile_no=mobile_no or '',
-                    first_name=first_name or '',
-                    last_name=last_name or '',
-                    otp=otp,
-                    changed_on=timezone.now(),
-                    register_type="Email" if email else "Mobile"
-                )
+            otp = generate_otp()
+            customer = await sync_to_async(CustomerRegister.objects.create)(
+                email=email or '',
+                mobile_no=mobile_no or '',
+                first_name=first_name or '',
+                last_name=last_name or '',
+                otp=otp,
+                changed_on=timezone.now(),
+                register_type="Email" if email else "Mobile",
+                admin=admin
+            )
 
-        if not is_google_signup:
             if email:
-                send_otp_email(email, first_name, otp)
+                await sync_to_async(send_otp_email)(email, first_name or '', otp)
             if mobile_no:
-                send_bulk_sms([mobile_no],otp)
-                # send_otp_sms([mobile_no], f"Hi,This is your OTP for password reset on Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it with anyone.")
+                await sync_to_async(send_bulk_sms)([mobile_no], otp)
 
         return JsonResponse({
-            "message": "Google account verified successfully." if is_google_signup else "OTP sent. Please verify to continue. The OTP is valid for 2 minutes.",
+            "message": "Google account registered successfully." if is_google_signup else "OTP sent. Please verify to continue.",
             "customer_id": customer.id,
             "status_code": 200
         }, status=200)
@@ -152,6 +135,120 @@ def customer_register(request):
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+
+# @csrf_exempt
+# def customer_register(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST allowed."}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         token = data.get('token')
+#         email = data.get('email')
+#         mobile_no = data.get('mobile_no')
+
+#         first_name = ''
+#         last_name = ''
+#         is_google_signup = False
+
+#         if token:
+#             google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
+#             response = requests.get(google_url)
+
+#             if response.status_code != 200:
+#                 return JsonResponse({"error": "Google token invalid."}, status=400)
+
+#             google_data = response.json()
+#             if "error" in google_data:
+#                 return JsonResponse({"error": "Invalid Token"}, status=400)
+
+#             email = google_data.get("email")
+#             first_name = google_data.get("given_name", "")
+#             last_name = google_data.get("family_name", "")
+#             is_google_signup = True
+
+#         if not email and not mobile_no:
+#             return JsonResponse({"error": "Provide email or mobile number."}, status=400)
+
+#         customer = None
+#         if email:
+#             customer = CustomerRegister.objects.filter(email=email).first()
+#         if not customer and mobile_no:
+#             customer = CustomerRegister.objects.filter(mobile_no=mobile_no).first()
+        
+#         admin = await sync_to_async(Admin.objects.order_by("id").first)()
+#             if not admin:
+#                 return JsonResponse({"error": "No admin found for assignment."}, status=500)
+
+#         if customer:
+#             if customer.register_status == 1 and customer.account_status == 1:
+#                 return JsonResponse({
+#                     "message": "Account already verified. Please login to continue.",
+#                     "customer_id": customer.id,
+#                     "email": customer.email,
+#                     "mobile_no": customer.mobile_no,
+#                 }, status=200)
+
+#             if customer.register_status == 1:
+#                 return JsonResponse({
+#                     "message": "Account already verified. Please proceed to next step.",
+#                     "customer_id": customer.id,
+#                     "email": customer.email,
+#                     "mobile_no": customer.mobile_no,
+#                 }, status=200)
+            
+#             if is_google_signup:
+#                 customer.register_status = 1
+#                 customer.first_name = customer.first_name or first_name
+#                 customer.last_name = customer.last_name or last_name
+#                 customer.save(update_fields=['register_status', 'first_name', 'last_name'])
+#             else:
+#                 otp = generate_otp()
+#                 customer.otp = otp
+#                 customer.changed_on = timezone.now()
+#                 customer.save(update_fields=['otp', 'changed_on'])
+#         else:
+#             if is_google_signup:
+#                 customer = CustomerRegister.objects.create(
+#                     email=email or '',
+#                     mobile_no=mobile_no or '',
+#                     first_name=first_name or '',
+#                     last_name=last_name or '',
+#                     register_status=1,
+#                     register_type="Google",
+#                     admin=admin
+#                 )
+#             else:
+#                 otp = generate_otp()
+#                 customer = CustomerRegister.objects.create(
+#                     email=email or '',
+#                     mobile_no=mobile_no or '',
+#                     first_name=first_name or '',
+#                     last_name=last_name or '',
+#                     otp=otp,
+#                     changed_on=timezone.now(),
+#                     register_type="Email" if email else "Mobile",
+#                     admin=admin
+#                 )
+
+#         if not is_google_signup:
+#             if email:
+#                 send_otp_email(email, first_name, otp)
+#             if mobile_no:
+#                 send_bulk_sms([mobile_no],otp)
+#                 # send_otp_sms([mobile_no], f"Hi,This is your OTP for password reset on Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it with anyone.")
+
+#         return JsonResponse({
+#             "message": "Google account verified successfully." if is_google_signup else "OTP sent. Please verify to continue. The OTP is valid for 2 minutes.",
+#             "customer_id": customer.id,
+#             "status_code": 200
+#         }, status=200)
+
+#     except json.JSONDecodeError:
+#         return JsonResponse({"error": "Invalid JSON."}, status=400)
+#     except Exception as e:
+#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
 @csrf_exempt
 def verify_customer_otp(request):
@@ -315,7 +412,6 @@ def customer_register_sec_phase(request):
         otp = generate_otp()
         otp_sent = False
         otp_send_type = None
-        # otp_send_type = None
         if email:
             otp_send_type = 'Email'
         elif mobile_no:
@@ -323,24 +419,6 @@ def customer_register_sec_phase(request):
         print(f"OTP send type:", otp_send_type)
         
         update_fields = []
-
-        # # Validate if already OTP sent via mobile or email
-        # if customer.register_status == 1 and customer.account_status == 0:
-        #     if customer.otp_send_type == 'Mobile':
-        #         if not mobile_no or (customer.mobile_no and customer.mobile_no != mobile_no):
-        #             return JsonResponse({"error": "Mobile number mismatch or missing for OTP verification."}, status=400)
-        #         if not customer.mobile_no:
-        #             customer.mobile_no = mobile_no
-        #             update_fields.append('mobile_no')
-            
-        #     elif customer.otp_send_type == 'Email':
-        #         if not email or (customer.email and customer.email != email):
-        #             return JsonResponse({"error": "Email mismatch or missing for OTP verification."}, status=400)
-        #         if not customer.email:
-        #             customer.email = email
-        #             update_fields.append('email')
-        #     else:
-        #         return JsonResponse({"error": "OTP send type is missing. Cannot verify."}, status=400)
 
         # New email provided
         if not customer.mobile_no and mobile_no:
@@ -375,17 +453,6 @@ def customer_register_sec_phase(request):
                 otp_sent = True
             else:
                 return JsonResponse({"error": "No verified email or mobile to resend OTP."}, status=400)
-
-        # if first_name:
-        #     customer.first_name = first_name
-        # if last_name:
-        #     customer.last_name = last_name
-
-        # customer.otp = otp
-        # customer.changed_on = timezone.now()
-        # customer.otp_send_type = otp_send_type
-        # customer.save(update_fields=['otp_send_type', 'mobile_no', 'email', 'first_name', 'last_name', 'otp', 'changed_on'])
-
         # Update name fields
         if first_name and customer.first_name != first_name:
             customer.first_name = first_name
@@ -563,7 +630,7 @@ def customer_login(request):
         data = json.loads(request.body)
         email = data.get('email')
         mobile_no = data.get('mobile_no')
-        token = data.get('token')  # Optional: Google token
+        token = data.get('token')
 
         first_name = ''
         last_name = ''

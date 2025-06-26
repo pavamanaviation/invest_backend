@@ -556,8 +556,6 @@ def admin_customer_kyc_details(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-
-
 @csrf_exempt
 def admin_nominee_details(request):
     if request.method != "POST":

@@ -1,6 +1,5 @@
-import requests
-import json
-from django.conf import settings
+from invest_app.utils.shared_imports import *
+
 
 def send_bulk_sms(mobile_number,otp):
     url = settings.MSG91_SMS_URL

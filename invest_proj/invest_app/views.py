@@ -1,18 +1,6 @@
-from datetime import timedelta
-import random
-import pytz
-import json
-
-from django.shortcuts import render
-from django.http import JsonResponse
-from django.utils import timezone
-from django.views.decorators.csrf import csrf_exempt
-from .models import Admin, CustomerRegister,Role,CustomerMoreDetails,KYCDetails,NomineeDetails
-from .sms_utils import send_otp_sms
-from django.contrib.auth.hashers import check_password
-from django.conf import settings
-from django.db.models import Q, Value
-from django.db.models.functions import Concat
+from invest_app.utils.shared_imports import *
+from .models import Admin, CustomerRegister, KYCDetails, CustomerMoreDetails, NomineeDetails, PaymentDetails, Role
+from invest_app.utils.msg91 import send_bulk_sms
 
 
 @csrf_exempt
@@ -440,35 +428,25 @@ def admin_customer_details(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-
 def format_kyc_data(kyc):
     s3_base_url = settings.AWS_S3_BUCKET_URL
-
     return {
         "customer_id": kyc.customer.id,
         "customer_fname": kyc.customer.first_name,
         "customer_lname": kyc.customer.last_name,
         "email": kyc.customer.email,
-        "mobile":kyc.customer.mobile_no,
+        "mobile": kyc.customer.mobile_no,
         "pan_number": kyc.pan_number,
         "pan_status": kyc.pan_status,
         "pan_path": f"{s3_base_url}/{kyc.pan_path}" if kyc.pan_path else "",
-
         "aadhar_number": kyc.aadhar_number,
         "aadhar_status": kyc.aadhar_status,
         "aadhar_path": f"{s3_base_url}/{kyc.aadhar_path}" if kyc.aadhar_path else "",
-
         "bank_account_number": kyc.banck_account_number,
         "ifsc_code": kyc.ifsc_code,
         "bank_status": kyc.bank_status,
-
-        "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S") if kyc.created_at else "",
     }
-
-from django.db.models import Q, Value
-from django.db.models.functions import Concat
-from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
 
 @csrf_exempt
 def admin_customer_kyc_details(request):
@@ -478,27 +456,42 @@ def admin_customer_kyc_details(request):
     try:
         data = json.loads(request.body)
         action = data.get("action", "view")
-        admin_id = data.get("admin_id")  # required
+        admin_id = data.get("admin_id")
         customer_id = data.get("customer_id")
+        limit = int(data.get("limit", 10))
+        offset = int(data.get("offset", 0))
 
         if not admin_id:
             return JsonResponse({"error": "admin_id is required"}, status=400)
 
         if action == "view":
-            kyc_records = KYCDetails.objects.all().order_by("-created_at")
-            kyc_list = [format_kyc_data(kyc) for kyc in kyc_records]
+            cache_key = f"kyc_list_admin_{admin_id}{offset}{limit}"
+            cached_data = cache.get(cache_key)
 
-            return JsonResponse({
+            if cached_data:
+                return JsonResponse(cached_data, status=200)
+
+            kyc_records = (
+                KYCDetails.objects.select_related("customer")
+                .order_by("-created_at")[offset:offset + limit]
+            )
+            total = KYCDetails.objects.count()
+
+            kyc_list = [format_kyc_data(kyc) for kyc in kyc_records]
+            response_data = {
                 "status": "success",
                 "status_code": 200,
                 "admin_id": admin_id,
-                "total_count": len(kyc_list),
+                "total_count": total,
                 "kyc_list": kyc_list
-            }, status=200)
+            }
+
+            cache.set(cache_key, response_data, timeout=300)  # 5 min
+            return JsonResponse(response_data, status=200)
 
         elif action == "view_more" and customer_id:
             try:
-                kyc = KYCDetails.objects.get(customer_id=customer_id)
+                kyc = KYCDetails.objects.select_related("customer").get(customer_id=customer_id)
                 return JsonResponse({
                     "status": "success",
                     "status_code": 200,
@@ -529,32 +522,66 @@ def admin_customer_kyc_details(request):
 
             if mobile:
                 kyc_records = kyc_records.filter(customer__mobile_no__icontains=mobile)
-
             if pan:
                 kyc_records = kyc_records.filter(pan_number__icontains=pan)
-
             if aadhar:
                 kyc_records = kyc_records.filter(aadhar_number__icontains=aadhar)
-
             if bank_no:
                 kyc_records = kyc_records.filter(banck_account_number__icontains=bank_no)
 
-            kyc_records = kyc_records.order_by("-created_at")
-            kyc_list = [format_kyc_data(kyc) for kyc in kyc_records]
+            total = kyc_records.count()
+            paginated_kyc = kyc_records.order_by("-created_at")[offset:offset + limit]
+            kyc_list = [format_kyc_data(kyc) for kyc in paginated_kyc]
 
             return JsonResponse({
                 "status": "success",
                 "status_code": 200,
                 "admin_id": admin_id,
-                "total_count": len(kyc_list),
+                "total_count": total,
                 "kyc_list": kyc_list
             }, status=200)
 
-        else:
-            return JsonResponse({"error": "Invalid action or missing customer_id"}, status=400)
+        return JsonResponse({"error": "Invalid action or missing customer_id"}, status=400)
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+
+
+def format_nominee(n):
+    s3_base_url = settings.AWS_S3_BUCKET_URL
+    return {
+        "nominee_id": n.id,
+        "first_name": n.first_name,
+        "last_name": n.last_name,
+        "relation": n.relation,
+        "dob": n.dob.strftime("%Y-%m-%d") if n.dob else None,
+        "address_proof": n.address_proof,
+        "address_proof_path": f"{s3_base_url}/{n.address_proof_path}" if n.address_proof_path else None,
+        "id_proof": n.id_proof,
+        "id_proof_path": f"{s3_base_url}/{n.id_proof_path}" if n.id_proof_path else None,
+        "nominee_status": n.nominee_status,
+        "created_at": n.created_at.strftime("%Y-%m-%d %H:%M:%S") if n.created_at else None
+    }
+
+
+def group_nominees_by_customer(nominee_queryset):
+    grouped = {}
+    for nominee in nominee_queryset:
+        cid = nominee.customer.id
+        if cid not in grouped:
+            grouped[cid] = {
+                "customer_id": cid,
+                "customer_name": f"{nominee.customer.first_name or ''} {nominee.customer.last_name or ''}".strip(),
+                "customer_email": nominee.customer.email,
+                "customer_mobile": nominee.customer.mobile_no,
+                "nominees": [],
+                "nominee_count": 0  # New field
+            }
+        grouped[cid]["nominees"].append(format_nominee(nominee))
+        grouped[cid]["nominee_count"] += 1  # Increment count
+    return list(grouped.values())
+
+
 
 @csrf_exempt
 def admin_nominee_details(request):
@@ -563,86 +590,234 @@ def admin_nominee_details(request):
 
     try:
         data = json.loads(request.body)
+        action = data.get("action", "view")
         admin_id = data.get("admin_id")
-        action = data.get("action")
+        customer_id = data.get("customer_id")
+        limit = int(data.get("limit", 10))
+        offset = int(data.get("offset", 0))
 
-        if not admin_id or not action:
-            return JsonResponse({"status": "error", "error": "Missing required fields."}, status=400)
+        if not admin_id:
+            return JsonResponse({"status": "error", "error": "admin_id is required"}, status=400)
 
-        # Base queryset
         queryset = NomineeDetails.objects.select_related("customer").filter(admin_id=admin_id)
 
         if action == "view":
-            nominees = queryset
+            cache_key = f"nominee_list_admin_{admin_id}{offset}{limit}"
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                return JsonResponse(cached_data, status=200)
 
-        elif action == "view_more":
-            nominee_id = data.get("nominee_id")
-            if not nominee_id:
-                return JsonResponse({"status": "error", "error": "nominee_id is required."}, status=400)
+            total = queryset.count()
+            nominees = queryset.order_by("-created_at")[offset:offset + limit]
+            grouped_data = group_nominees_by_customer(nominees)
 
-            nominee = queryset.filter(id=nominee_id).first()
-            if not nominee:
-                return JsonResponse({"status": "error", "error": "Nominee not found."}, status=404)
+            response_data = {
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": total,
+                "nominees": grouped_data
+            }
+
+            cache.set(cache_key, response_data, timeout=300)
+            return JsonResponse(response_data, status=200)
+
+        elif action == "view_more" and customer_id:
+            nominees = queryset.filter(customer_id=customer_id).order_by("-created_at")
+            if not nominees.exists():
+                return JsonResponse({"status": "error", "error": "No nominee found for customer."}, status=404)
+
+            grouped_data = group_nominees_by_customer(nominees)
+            return JsonResponse({
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "customer_id": customer_id,
+                "nominees": grouped_data
+            }, status=200)
+
+        elif action == "search":
+            name = data.get("name", "").strip()
+            mobile = data.get("mobile_no", "").strip()
+            min_nominee_count = int(data.get("min_nominee_count", 0))
+            min_verified_nominee_count = int(data.get("min_verified_nominee_count", 0))
+
+            filters = Q(admin_id=admin_id)
+
+            if name:
+                filters &= (
+                    Q(customer__first_name__icontains=name) |
+                    Q(customer__last_name__icontains=name) |
+                    Q(first_name__icontains=name) |
+                    Q(last_name__icontains=name)
+                )
+
+            if mobile:
+                filters &= Q(customer__mobile_no__icontains=mobile)
+
+            # Get nominee queryset after filtering
+            nominees = queryset.filter(filters).order_by("-created_at")
+
+            # Group nominees by customer
+            grouped_data = group_nominees_by_customer(nominees)
+
+            # Now apply nominee count filtering in-memory
+            filtered_grouped_data = [
+                group for group in grouped_data
+                if group["nominee_count"] >= min_nominee_count and group["verified_nominee_count"] >= min_verified_nominee_count
+            ]
 
             return JsonResponse({
                 "status": "success",
-                "nominee": {
-                    "id": nominee.id,
-                    "first_name": nominee.first_name,
-                    "last_name": nominee.last_name,
-                    "relation": nominee.relation,
-                    "dob": nominee.dob,
-                    "address_proof": nominee.address_proof,
-                    "address_proof_path": nominee.address_proof_path,
-                    "id_proof": nominee.id_proof,
-                    "id_proof_path": nominee.id_proof_path,
-                    "nominee_status": nominee.nominee_status,
-                    "created_at": nominee.created_at,
-                    "customer_name": f"{nominee.customer.first_name or ''} {nominee.customer.last_name or ''}".strip(),
-                    "customer_email": nominee.customer.email,
-                    "customer_mobile": nominee.customer.mobile_no,
-                }
-            })
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": len(filtered_grouped_data),
+                "nominees": filtered_grouped_data
+            }, status=200)
 
-        elif action == "search":
-            filters = Q(admin_id=admin_id)
-            if data.get("name"):
-                filters &= (Q(first_name__icontains=data["name"]) | Q(last_name__icontains=data["name"]))
-            if data.get("email"):
-                filters &= Q(customer__email__icontains=data["email"])
-            if data.get("mobile_no"):
-                filters &= Q(customer__mobile_no__icontains=data["mobile_no"])
-            if data.get("relation"):
-                filters &= Q(relation__icontains=data["relation"])
-
-            nominees = queryset.filter(filters)
-
-        else:
-            return JsonResponse({"status": "error", "error": "Invalid action provided."}, status=400)
-
-        nominee_list = [
-            {
-                "id": n.id,
-                "first_name": n.first_name,
-                "last_name": n.last_name,
-                "relation": n.relation,
-                "dob": n.dob,
-                "address_proof": n.address_proof,
-                "id_proof": n.id_proof,
-                "nominee_status": n.nominee_status,
-                "created_at": n.created_at,
-                "customer_name": f"{n.customer.first_name or ''} {n.customer.last_name or ''}".strip(),
-                "customer_email": n.customer.email,
-                "customer_mobile": n.customer.mobile_no
-            }
-            for n in nominees
-        ]
-
-        return JsonResponse({
-            "status": "success",
-            "nominees": nominee_list,
-            "total_count": len(nominee_list)
-        })
+        return JsonResponse({"status": "error", "error": "Invalid action or missing parameters."}, status=400)
 
     except Exception as e:
         return JsonResponse({"status": "error", "error": str(e)}, status=500)
+def format_customer_data(customer, more):
+    address_parts = [more.address, more.city, more.mandal, more.district, more.state, more.pincode] if more else []
+    address = ", ".join(part for part in address_parts if part)
+
+    return {
+        "customer_id": customer.id,
+        "name": f"{customer.first_name} {customer.last_name}".strip(),
+        "email": customer.email,
+        "mobile_no": customer.mobile_no,
+        "register_type": customer.register_type,
+        "register_status": customer.register_status,
+        "account_status": customer.account_status,
+        "created_at": customer.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "dob": more.dob.strftime("%Y-%m-%d") if more and more.dob else "",
+        "gender": more.gender if more else "",
+        "profession": more.profession if more else "",
+        "designation": more.designation if more else "",
+        "address": address,
+        "selfie": f"{settings.AWS_S3_BUCKET_URL}/{more.selfie_path}" if more and more.selfie_path else "",
+        "signature": f"{settings.AWS_S3_BUCKET_URL}/{more.signature_path}" if more and more.signature_path else "",
+    }
+
+from django.core.cache import cache
+from django.core.paginator import Paginator
+from django.views.decorators.csrf import csrf_exempt
+
+@csrf_exempt
+def admin_customer_details(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        admin_id = data.get('admin_id')
+        action = data.get('action', 'view')
+        customer_id = data.get('customer_id')
+        limit = int(data.get('limit', 20))
+        offset = int(data.get('offset', 0))
+
+        if not admin_id:
+            return JsonResponse({'error': 'admin_id is required'}, status=400)
+
+        # 🔁 Handle "view" with caching
+        if action == "view":
+            cache_key = f"admin_customers_{admin_id}{limit}{offset}"
+            cached_result = cache.get(cache_key)
+            if cached_result:
+                return JsonResponse(cached_result, status=200)
+
+            customers = CustomerRegister.objects.filter(admin_id=admin_id).order_by("-created_at")
+            customer_ids = customers.values_list("id", flat=True)[offset:offset+limit]
+            more_details_map = {
+                more.customer_id: more
+                for more in CustomerMoreDetails.objects.filter(customer_id__in=customer_ids)
+            }
+
+            paginated_customers = customers.filter(id__in=customer_ids)
+            customer_details = [
+                format_customer_data(customer, more_details_map.get(customer.id))
+                for customer in paginated_customers
+            ]
+
+            response_data = {
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": customers.count(),
+                "customers": customer_details
+            }
+
+            # ⏱️ Cache the result for 5 minutes
+            cache.set(cache_key, response_data, timeout=300)
+            return JsonResponse(response_data, status=200)
+
+        # 🧾 Handle view_more
+        elif action == "view_more" and customer_id:
+            customer = CustomerRegister.objects.filter(id=customer_id, admin_id=admin_id).first()
+            if not customer:
+                return JsonResponse({"error": "Customer not found"}, status=404)
+
+            more = CustomerMoreDetails.objects.filter(customer=customer).first()
+            customer_data = format_customer_data(customer, more)
+
+            return JsonResponse({
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "customer": customer_data
+            }, status=200)
+
+        # 🔍 Handle search
+        elif action == "search":
+            name = data.get('name', '').strip()
+            email = data.get('email', '').strip()
+            mobile_no = data.get('mobile_no', '').strip()
+            account_status = data.get('account_status', '').strip()
+
+            customers = CustomerRegister.objects.filter(admin_id=admin_id)
+
+            if name:
+                customers = customers.annotate(
+                    full_name=Concat('first_name', Value(' '), 'last_name')
+                ).filter(
+                    Q(first_name__icontains=name) |
+                    Q(last_name__icontains=name) |
+                    Q(full_name__icontains=name)
+                )
+
+            if email:
+                customers = customers.filter(email__icontains=email)
+
+            if mobile_no:
+                customers = customers.filter(mobile_no__icontains=mobile_no)
+
+            if account_status != "":
+                customers = customers.filter(account_status=int(account_status))
+
+            customers = customers.order_by("-created_at")
+            customer_ids = customers.values_list("id", flat=True)[offset:offset+limit]
+            more_details_map = {
+                more.customer_id: more
+                for more in CustomerMoreDetails.objects.filter(customer_id__in=customer_ids)
+            }
+
+            paginated_customers = customers.filter(id__in=customer_ids)
+            customer_details = [
+                format_customer_data(customer, more_details_map.get(customer.id))
+                for customer in paginated_customers
+            ]
+
+            return JsonResponse({
+                "status": "success",
+                "status_code": 200,
+                "admin_id": admin_id,
+                "total_count": customers.count(),
+                "customers": customer_details
+            }, status=200)
+
+        return JsonResponse({'error': 'Invalid action or missing customer_id'}, status=400)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)

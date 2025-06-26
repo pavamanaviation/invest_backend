@@ -1,6 +1,7 @@
 
-import requests
-from django.conf import settings
+
+from invest_app.utils.shared_imports import *
+
 
 # def send_pan_verification_request(pan_number,full_name,dob, task_id):
 #     url = settings.IDFY_PAN_VERIFY_URL
@@ -27,15 +28,17 @@ from django.conf import settings
 #     except Exception as e:
 #         return {"error": str(e)}
 # pan_utils.py
-import httpx
-from asgiref.sync import sync_to_async
-async def send_pan_verification_request(pan_number, full_name, dob, task_id):
+
+def send_pan_verification_request(pan_number, full_name, dob, task_id=None):
     url = settings.IDFY_PAN_VERIFY_URL
     headers = {
         "Content-Type": "application/json",
         "account-id": settings.IDFY_TEST_ACCOUNT_ID,
         "api-key": settings.IDFY_TEST_API_KEY,
     }
+
+    if not task_id:
+        task_id = str(uuid.uuid4())
 
     payload = {
         "task_id": task_id,
@@ -48,19 +51,13 @@ async def send_pan_verification_request(pan_number, full_name, dob, task_id):
     }
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, json=payload)
-            return response.json()
+        response = requests.post(url, headers=headers, json=payload)
+        return response.json()
     except Exception as e:
         return {"error": str(e)}
-import httpx
-import base64
-import uuid
-from django.conf import settings
 
-async def async_send_idfy_pan_ocr(file_bytes):
-    url = "https://eve.idfy.com/v3/tasks/async/verify_with_source/ocr_pan"  # ✅ Use sandbox
-
+def send_idfy_pan_ocr(file_bytes):
+    url = "https://eve.idfy.com/v3/tasks/async/verify_with_source/ocr_pan"
     headers = {
         "Content-Type": "application/json",
         "account-id": settings.IDFY_TEST_ACCOUNT_ID,
@@ -68,24 +65,23 @@ async def async_send_idfy_pan_ocr(file_bytes):
     }
 
     task_id = str(uuid.uuid4())
+    encoded_file = base64.b64encode(file_bytes).decode("utf-8")
 
     payload = {
         "task_id": task_id,
-        # "group_id": settings.IDFY_TEST_GROUP_ID,
         "data": {
-            "file": base64.b64encode(file_bytes).decode("utf-8"),
+            "file": encoded_file,
             "document_type": "pan"
         }
     }
 
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, headers=headers, json=payload)
-            return {
-                "status_code": response.status_code,
-                "task_id": task_id,
-                "response": response.json()
-            }
+        response = requests.post(url, headers=headers, json=payload)
+        return {
+            "status_code": response.status_code,
+            "task_id": task_id,
+            "response": response.json()
+        }
     except Exception as e:
         return {
             "status_code": 500,

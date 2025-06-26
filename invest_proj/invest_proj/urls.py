@@ -25,7 +25,7 @@ from invest_app.customer_views import (customer_register,verify_customer_otp,cus
 customer_login,pan_verification_request_view, pan_verification_result_view,
 aadhar_lite_verification_view,bank_account_verification_view,customer_more_details,customer_profile_view,
 upload_pdf_document,verify_and_save_nominee,create_drone_order,razorpay_callback,payment_status_check,
-initiate_nominee_registration,
+initiate_nominee_registration,pan_ocr_upload_view,
 )
 
 from invest_app.role_views import (get_model_names_by_role,get_model_data_by_role_and_model)
@@ -52,13 +52,16 @@ urlpatterns = [
     path('customer-login', customer_login, name='customer_login'),
     path('verify-pan', pan_verification_request_view, name='verify_pan'),
     path('verify-pan-result', pan_verification_result_view, name='verify_pan_result'),
+    path('verify-pandoc', pan_ocr_upload_view, name='pan_ocr_upload_view'),
+
     path('verify-aadhar-lite', aadhar_lite_verification_view,name='aadhar_lite_verification'),
     path('verify-banck-account', bank_account_verification_view, name='bank_account_verification'),
     path('customer-more-details', customer_more_details, name='customer_more_details'),
     path('customer-profile', customer_profile_view, name='customer_profile'),
     path('upload-pdf-document', upload_pdf_document, name='upload_pdf_document'),
     path('nominee-details', verify_and_save_nominee, name='verify_and_save_nominee'),
-    path('initiate_nominee_registration',initiate_nominee_registration, name='initiate_nominee_registration'),
+    path('initiate-nominee-registration',initiate_nominee_registration, name='initiate_nominee_registration'),
+
 
     path('create-drone-order', create_drone_order, name='create_drone_order'),
     path('razorpay-callback', razorpay_callback, name='razorpay_callback'),

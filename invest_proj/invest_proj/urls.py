@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-from invest_app.views import (register_role,view_roles,delete_role,update_role,
+from invest_app.views import (add_role,view_roles,delete_role,update_role,get_models_by_admin,assign_role_permissions,view_role_permissions_by_admin,
                               verify_otp,admin_customer_details,admin_customer_kyc_details)
 
 # from invest_app.views import check_indian_time 
@@ -27,10 +27,16 @@ aadhar_lite_verification_view,bank_account_verification_view,customer_more_detai
 upload_pdf_document,verify_and_save_nominee,create_drone_order,razorpay_callback,payment_status_check,
 initiate_nominee_registration,
 )
+
+from invest_app.role_views import (get_model_names_by_role,get_model_data_by_role_and_model)
 urlpatterns = [
+    #admin urls
     path('admin/', admin.site.urls),
     path('verify-otp', verify_otp, name='verify_otp'),
-    path('register-role', register_role, name='register_role'),
+    path('permission-data',get_models_by_admin,name="permission_data"),
+    path('assign-role-permissions',assign_role_permissions,name='assign_role_permissions'),
+    path('view-all-role-permissions',view_role_permissions_by_admin,name='view_role_permissions_by_admin'),
+    path('add-role', add_role, name='add_role'),
     path('view-roles', view_roles,name='view_roles'), 
     path('delete-role', delete_role, name='delete_role'),
     path('update-role', update_role, name='update_role'),
@@ -39,7 +45,7 @@ urlpatterns = [
     path('admin-customer-details',admin_customer_details,name='admin_customer_details'),
     path('admin-customer-kyc-details',admin_customer_kyc_details,name='admin_customer_kyc_details'),
 
-
+    #customer urls
     path('customer-register', customer_register, name='customer_register'),
     path('verify-customer-otp', verify_customer_otp, name='verify_customer_otp'),
     path('customer-register-sec-phase', customer_register_sec_phase, name='customer_register_sec_phase'),
@@ -56,5 +62,11 @@ urlpatterns = [
 
     path('create-drone-order', create_drone_order, name='create_drone_order'),
     path('razorpay-callback', razorpay_callback, name='razorpay_callback'),
-    path('payment-status-check', payment_status_check, name='payment_status_check')
+    path('payment-status-check', payment_status_check, name='payment_status_check'),
+
+    #role urls
+    path('get-models-names',get_model_names_by_role,name='get_model_names_by_role'),
+    path('get-details',get_model_data_by_role_and_model,name='get_model_data_by_role_and_model')
+
+    
 ]

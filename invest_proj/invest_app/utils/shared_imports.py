@@ -36,3 +36,4 @@ from django.core.cache import cache
 from email.utils import parsedate
 from django.core.cache import cache
 from django.core.paginator import Paginator
+from django.apps import apps

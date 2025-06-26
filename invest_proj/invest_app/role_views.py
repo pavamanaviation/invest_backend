@@ -1,9 +1,7 @@
+from invest_app.utils.shared_imports import *
+
 from invest_app.models import (CustomerRegister,Role,CustomerMoreDetails,
                                KYCDetails,Permission)
-from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
-from django.apps import apps
-import json
 from invest_app.views import MODEL_LABELS
 
 @csrf_exempt

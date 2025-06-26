@@ -157,3 +157,13 @@ class PaymentDetails(models.Model):
     status = models.CharField(max_length=20, default='created')  # created, paid, failed
     created_at = models.DateTimeField(auto_now_add=True)
     payment_status= models.IntegerField(default=0)
+
+class Permission(models.Model):
+    model_name = models.CharField(max_length=100)
+    can_add = models.BooleanField(default=False)
+    can_view = models.BooleanField(default=False)
+    can_edit = models.BooleanField(default=False)
+    can_delete = models.BooleanField(default=False)
+    role = models.ForeignKey(Role, on_delete=models.CASCADE)
+    admin = models.ForeignKey(Admin, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)

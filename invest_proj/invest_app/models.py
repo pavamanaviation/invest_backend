@@ -1,5 +1,4 @@
 from django.db import models
-from django.contrib.auth.hashers import make_password
 from django.utils import timezone
 from datetime import timedelta
 class Admin(models.Model):
@@ -125,7 +124,7 @@ class CustomerMoreDetails(models.Model):
     selfie_status=models.IntegerField(default=0)
     signature_status=models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
-
+    status=models.IntegerField(default=1)
     def __str__(self):
         return f"More Details for {self.customer.email}" if self.customer else "Customer More Details"
 
@@ -143,6 +142,8 @@ class NomineeDetails(models.Model):
     id_proof_path = models.CharField(max_length=250, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     nominee_status= models.IntegerField(default=0)
+    status=models.IntegerField(default=1)
+    share=models.FloatField(default=0.0)
     def __str__(self):
         return f"Nominee for {self.customer.email}" if self.customer else "Nominee Details"
 class PaymentDetails(models.Model):
@@ -154,10 +155,10 @@ class PaymentDetails(models.Model):
     payment_mode = models.CharField(max_length=40,default='card')
     part_number = models.IntegerField(default=1)  # 1, 2, or 3
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(max_length=20, default='created')  # created, paid, failed
+    drone_payment_status = models.CharField(max_length=20, default='created')  # created, paid, failed
     created_at = models.DateTimeField(auto_now_add=True)
     payment_status= models.IntegerField(default=0)
-
+    status=models.IntegerField(default=1)
 class Permission(models.Model):
     model_name = models.CharField(max_length=100)
     can_add = models.BooleanField(default=False)

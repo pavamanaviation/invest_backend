@@ -159,8 +159,14 @@ def get_models_by_admin(request):
             for model in app_models
             if model.__name__ not in excluded_models and model.__name__ in model_name_map
         }
+        roles = Role.objects.filter(admin_id=admin_id,status = 1).values(
+            'id', 'role_type', 'first_name','last_name', 'email', 'company_name'
+        )
 
-        return JsonResponse({'models': model_dict}, status=200)
+        return JsonResponse(
+            {'models': model_dict,
+             'roles': list(roles)
+             }, status=200)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)

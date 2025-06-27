@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.urls import path
 
 from invest_app.views import (add_role,view_roles,delete_role,update_role,get_models_by_admin,assign_role_permissions,view_role_permissions_by_admin,
-                              verify_otp,admin_customer_details,admin_customer_kyc_details)
+                              verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details)
 
 # from invest_app.views import check_indian_time 
 from invest_app.customer_views import (customer_register,verify_customer_otp,customer_register_sec_phase,
@@ -44,6 +44,7 @@ urlpatterns = [
 
     path('admin-customer-details',admin_customer_details,name='admin_customer_details'),
     path('admin-customer-kyc-details',admin_customer_kyc_details,name='admin_customer_kyc_details'),
+    path('admin-nominee-details', admin_nominee_details, name='admin_nominee_details'),
 
     #customer urls
     path('customer-register', customer_register, name='customer_register'),

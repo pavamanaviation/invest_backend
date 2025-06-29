@@ -474,8 +474,12 @@ IDFY_BANK_VERIFY_URL = os.getenv("IDFY_BANK_VERIFY_URL", "https://eve.idfy.com/v
 IDFY_AADHAR_VERIFY_URL = os.getenv("IDFY_AADHAR_VERIFY_URL", "https://eve.idfy.com/v3/tasks/sync/verify_with_source/aadhaar_lite")
 IDFY_PAN_VERIFY_URL = os.getenv("IDFY_PAN_VERIFY_URL", "https://eve.idfy.com/v3/tasks/sync/verify_with_source/pan")
 IDFY_RESULT_URL = "https://eve.idfy.com/v3/tasks?request_id={request_id}"
-
-
+# ----------
+IDFY_ACCOUNT_ID = os.getenv("IDFY_ACCOUNT_ID")
+IDFY_API_KEY = os.getenv("IDFY_API_KEY")
+IDFY_GROUP_ID = os.getenv("IDFY_GROUP_ID")
+IDFY_BASE_URL = os.getenv("IDFY_BASE_URL", "https://eve.idfy.com/v3")
+# -----------------
 
 CSRF_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_SECURE = False  # Set to True in production (HTTPS)
@@ -494,3 +498,4 @@ MSG91_COUNTRY = config('MSG91_COUNTRY', default='91')
 MSG91_SMS_URL = config('MSG91_SMS_URL')
 MSG91_FLOW_ID_RESETPASSWORD = config('MSG91_FLOW_ID_RESETPASSWORD')
 MSG91_FLOW_ID_MOILE_VERIFY = config('MSG91_FLOW_ID_MOILE_VERIFY')
+

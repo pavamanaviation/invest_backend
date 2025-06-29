@@ -1,6 +1,7 @@
 from invest_app.utils.shared_imports import *
-from .models import Admin, CustomerRegister, KYCDetails, CustomerMoreDetails, NomineeDetails, PaymentDetails, Permission, Role
-from invest_app.utils.msg91 import send_bulk_sms
+from invest_app.utils.s3_helper import generate_presigned_url
+from .models import (Admin, CustomerRegister, KYCDetails, CustomerMoreDetails,
+                      NomineeDetails, PaymentDetails, Permission, Role)
 
 MODEL_LABELS = {
                 "CustomerRegister": "Customer Registration Details",
@@ -10,123 +11,89 @@ MODEL_LABELS = {
                 "PaymentDetails": "Payment Details"
             }
 
+def validate_otp_and_expiry(user, otp):
+    if not user.changed_on or timezone.now() > user.changed_on + timedelta(minutes=2):
+        return "OTP has expired. Please request a new one."
+
+    if not user.otp or not str(user.otp).isdigit():
+        return "OTP is invalid or missing. Please request a new one."
+
+    try:
+        if int(user.otp) != int(otp):
+            return "Invalid OTP."
+    except ValueError:
+        return "Invalid OTP format."
+
+    return None  # OTP is valid
+
+
 @csrf_exempt
 def verify_otp(request):
     if request.method != 'POST':
-        return JsonResponse({"error": "Only POST allowed."}, status=405)
+        return JsonResponse({"error": "Only POST method is allowed."}, status=405)
 
     try:
         data = json.loads(request.body)
-        email = data.get('email')
-        mobile_no = data.get('mobile_no')
         otp = data.get('otp')
+        email = data.get('email', '').strip()
+        mobile_no = data.get('mobile_no', '').strip()
 
-        if not otp:
-            return JsonResponse({"error": "OTP is required."}, status=400)
+        if not otp or not (email or mobile_no):
+            return JsonResponse({"error": "OTP and email or mobile number are required."}, status=400)
 
-        # --- 1. Try Customer --- #
-        customer = None
-        if email:
-            customer = CustomerRegister.objects.filter(email=email).first()
-        if not customer and mobile_no:
-            customer = CustomerRegister.objects.filter(mobile_no=mobile_no).first()
+        # Define user models and session mappings
+        user_types = [
+            {
+                "model": CustomerRegister,
+                "session_key": "customer_id",
+                "extra_check": lambda u: u.register_status == 1 and u.account_status == 1,
+                "error": "Account is not active or verified."
+            },
+            {"model": Admin, "session_key": "admin_id"},
+            {"model": Role, "session_key": "role_id"}
+        ]
 
-        if customer:
-            # Check OTP expiry (2 minutes)
-            if not customer.changed_on or timezone.now() > customer.changed_on + timedelta(minutes=2):
-                return JsonResponse({"error": "OTP has expired. Please request a new one."}, status=400)
+        for user_type in user_types:
+            model = user_type["model"]
+            user = model.objects.filter(
+                Q(email=email) | Q(mobile_no=mobile_no)
+            ).first()
 
-            if not customer.otp or not str(customer.otp).isdigit():
-                return JsonResponse({"error": "OTP is invalid or missing. Please request a new one."}, status=400)
+            if user:
+                # Validate OTP
+                error = validate_otp_and_expiry(user, otp)
+                if error:
+                    return JsonResponse({"error": error}, status=400)
 
-            try:
-                if int(customer.otp) != int(otp):
-                    return JsonResponse({"error": "Invalid OTP."}, status=400)
-            except:
-                return JsonResponse({"error": "Invalid OTP format."}, status=400)
+                # Extra user-type specific validation
+                if "extra_check" in user_type and not user_type["extra_check"](user):
+                    return JsonResponse({"error": user_type["error"]}, status=403)
 
-            if customer.register_status == 1 and customer.account_status == 1:
-                customer.otp = None
-                customer.save()
-                request.session['customer_id'] = customer.id
+                # OTP is valid, clear it and update session
+                user.otp = None
+                user.save(update_fields=["otp"])
+
+                request.session[user_type["session_key"]] = user.id
                 request.session.save()
-                return JsonResponse({
-                    "message": "OTP verified and login successful.",
-                    "customer_id": customer.id,
-                    "email": customer.email,
-                    "register_status": customer.register_status,
-                    "account_status": customer.account_status,
+
+                # Construct response
+                response = {
+                    "message": f"OTP verified and login successful ({user_type['session_key'].split('_')[0].capitalize()}).",
+                    user_type["session_key"]: user.id,
+                    "email": user.email,
                     "session_id": request.session.session_key
-                }, status=200)
-            else:
-                return JsonResponse({"error": "Account is not active or verified."}, status=403)
+                }
 
-        # --- 2. Try Admin --- #
-        admin = None
-        if email:
-            admin = Admin.objects.filter(email=email).first()
-        if not admin and mobile_no:
-            admin = Admin.objects.filter(mobile_no=mobile_no).first()
+                if user_type["session_key"] == "customer_id":
+                    response["register_status"] = user.register_status
+                    response["account_status"] = user.account_status
 
-        if admin:
-            if not admin.changed_on or timezone.now() > admin.changed_on + timedelta(minutes=2):
-                return JsonResponse({"error": "OTP has expired. Please request a new one."}, status=400)
-
-            if not admin.otp or not str(admin.otp).isdigit():
-                return JsonResponse({"error": "OTP is invalid or missing. Please request a new one."}, status=400)
-
-            try:
-                if int(admin.otp) != int(otp):
-                    return JsonResponse({"error": "Invalid OTP."}, status=400)
-            except:
-                return JsonResponse({"error": "Invalid OTP format."}, status=400)
-            admin.otp = None
-            admin.save()
-            request.session['admin_id'] = admin.id
-            request.session.save()
-
-            return JsonResponse({
-                "message": "OTP verified and login successful (Admin).",
-                "admin_id": admin.id,
-                "email": admin.email,
-                "session_id": request.session.session_key
-            }, status=200)
-
-        # --- 3. Try Employee (Role) --- #
-        role = None
-        if email:
-            role = Role.objects.filter(email=email).first()
-        if not role and mobile_no:
-            role = Role.objects.filter(mobile_no=mobile_no).first()
-
-        if role:
-            if not role.changed_on or timezone.now() > role.changed_on + timedelta(minutes=2):
-                return JsonResponse({"error": "OTP has expired. Please request a new one."}, status=400)
-
-            if not role.otp or not str(role.otp).isdigit():
-                return JsonResponse({"error": "OTP is invalid or missing. Please request a new one."}, status=400)
-
-            try:
-                if int(role.otp) != int(otp):
-                    return JsonResponse({"error": "Invalid OTP."}, status=400)
-            except:
-                return JsonResponse({"error": "Invalid OTP format."}, status=400)
-            role.otp = None
-            role.save()
-            request.session['role_id'] = role.id
-            request.session.save()
-
-            return JsonResponse({
-                "message": "OTP verified and login successful (Employee).",
-                "role_id": role.id,
-                "email": role.email,
-                "session_id": request.session.session_key
-            }, status=200)
+                return JsonResponse(response, status=200)
 
         return JsonResponse({"error": "Account not found."}, status=404)
 
     except json.JSONDecodeError:
-        return JsonResponse({"error": "Invalid JSON."}, status=400)
+        return JsonResponse({"error": "Invalid JSON format."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
     
@@ -516,11 +483,6 @@ def format_customer_data(customer):
 #     except Exception as e:
 #         return JsonResponse({'error': str(e)}, status=500)
 
-from django.db.models import Q, Value
-from django.db.models.functions import Concat
-from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
-import json
 
 @csrf_exempt
 def admin_customer_details(request):
@@ -607,10 +569,76 @@ def admin_customer_details(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+    
+    """
+    Securely serve PAN or Aadhar documents via short-lived pre-signed S3 URL.
 
+    We use this endpoint instead of sending raw S3 links in the frontend
+    to:
+      - Keep S3 objects private (bucket is not public)
+      - Prevent hardcoded S3 URLs in frontend (which can be abused)
+      - Allow only authorized users (admin/employee/customer) to access docs
+      - Generate a new 5-min valid URL each time for better security
+    """
+@csrf_exempt
+def view_kyc_doc(request):
+    """
+    Securely serve PAN or Aadhar documents via short-lived pre-signed S3 URL.
 
+    We use this endpoint instead of sending raw S3 links in the frontend
+    to:
+      - Keep S3 objects private (bucket is not public)
+      - Prevent hardcoded S3 URLs in frontend (which can be abused)
+      - Allow only authorized users (admin/employee/customer) to access docs
+      - Generate a new 5-min valid URL each time for better security
+    """
+    customer_id = request.GET.get("customer_id")
+    doc_type = request.GET.get("type")  # "pan" or "aadhar"
+    admin_id = request.GET.get("admin_id")  # getting admin_id from frontend
+
+    if not all([customer_id, doc_type, admin_id]):
+        return JsonResponse({"error": "Missing required fields"}, status=400)
+
+   
+    if not Admin.objects.filter(id=admin_id).exists():
+        return JsonResponse({"error": "Invalid admin ID"}, status=401)
+    if not CustomerRegister.objects.filter(id=customer_id).exists():
+        return JsonResponse({"error": "Invalid customer ID"}, status=404)
+
+    try:
+        kyc = KYCDetails.objects.select_related("customer").get(customer__id=customer_id)
+
+        file_path = ""
+        if doc_type == "pan":
+            file_path = kyc.pan_path
+        elif doc_type == "aadhar":
+            file_path = kyc.aadhar_path
+        else:
+            return JsonResponse({"error": "Invalid document type"}, status=400)
+
+        if not file_path:
+            return JsonResponse({"error": "Document not uploaded"}, status=404)
+
+        presigned_url = generate_presigned_url(file_path, expires_in=300)
+        return JsonResponse({"url": presigned_url})
+
+    except KYCDetails.DoesNotExist:
+        return JsonResponse({"error": "KYC details not found"}, status=404)
 def format_kyc_data(kyc):
-    s3_base_url = settings.AWS_S3_BUCKET_URL
+    # pan_url = generate_presigned_url(kyc.pan_path, expires_in=300) if kyc.pan_path else ""
+    # aadhar_url = generate_presigned_url(kyc.aadhar_path, expires_in=300) if kyc.aadhar_path else ""
+    """
+    Instead of sending pre-signed S3 links directly in the response,
+    we return a relative API endpoint like `/api/view-kyc-doc/?customer_id=...&type=pan`.
+
+    Why?
+      - Keeps S3 bucket details hidden from frontend
+      - Ensures the document access is controlled via our Django logic
+      - Allows only authorized admin/employee/customer to access S3 files
+      - Prevents generation of unused signed URLs on every data load
+
+    The frontend can call this endpoint on-demand (when user clicks "View") to get a fresh secure URL.
+    """
     return {
         "customer_id": kyc.customer.id,
         "customer_fname": kyc.customer.first_name,
@@ -619,16 +647,39 @@ def format_kyc_data(kyc):
         "mobile": kyc.customer.mobile_no,
         "pan_number": kyc.pan_number,
         "pan_status": kyc.pan_status,
-        "pan_path": f"{s3_base_url}/{kyc.pan_path}" if kyc.pan_path else "",
+        "pan_path_db": kyc.pan_path,
+        "pan_path": f"/api/view-kyc-doc/?customer_id={kyc.customer.id}&type=pan" if kyc.pan_path else "",
+        # "pan_path": pan_url,
         "aadhar_number": kyc.aadhar_number,
         "aadhar_status": kyc.aadhar_status,
-        "aadhar_path": f"{s3_base_url}/{kyc.aadhar_path}" if kyc.aadhar_path else "",
+        "aadhar_path_db": kyc.aadhar_path,
+        # "aadhar_path": aadhar_url,
+         "aadhar_path": f"/api/view-kyc-doc/?customer_id={kyc.customer.id}&type=aadhar" if kyc.aadhar_path else "",
         "bank_account_number": kyc.banck_account_number,
         "ifsc_code": kyc.ifsc_code,
         "bank_status": kyc.bank_status,
         "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S") if kyc.created_at else "",
     }
 
+# def format_kyc_data(kyc):
+#     s3_base_url = settings.AWS_S3_BUCKET_URL
+#     return {
+#         "customer_id": kyc.customer.id,
+#         "customer_fname": kyc.customer.first_name,
+#         "customer_lname": kyc.customer.last_name,
+#         "email": kyc.customer.email,
+#         "mobile": kyc.customer.mobile_no,
+#         "pan_number": kyc.pan_number,
+#         "pan_status": kyc.pan_status,
+#         "pan_path": f"{s3_base_url}/{kyc.pan_path}" if kyc.pan_path else "",
+#         "aadhar_number": kyc.aadhar_number,
+#         "aadhar_status": kyc.aadhar_status,
+#         "aadhar_path": f"{s3_base_url}/{kyc.aadhar_path}" if kyc.aadhar_path else "",
+#         "bank_account_number": kyc.banck_account_number,
+#         "ifsc_code": kyc.ifsc_code,
+#         "bank_status": kyc.bank_status,
+#         "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S") if kyc.created_at else "",
+#     }
 @csrf_exempt
 def admin_customer_kyc_details(request):
     if request.method != "POST":
@@ -646,19 +697,23 @@ def admin_customer_kyc_details(request):
             return JsonResponse({"error": "admin_id is required"}, status=400)
 
         if action == "view":
-            cache_key = f"kyc_list_admin_{admin_id}{offset}{limit}"
-            cached_data = cache.get(cache_key)
+            cache_key = f"kyc_list_ids_admin_{admin_id}_{offset}_{limit}"
+            cached_ids = cache.get(cache_key)
 
-            if cached_data:
-                return JsonResponse(cached_data, status=200)
+            if cached_ids:
+                kyc_records = KYCDetails.objects.select_related("customer").filter(id__in=cached_ids)
+            else:
+                kyc_records = (
+                    KYCDetails.objects.select_related("customer")
+                    .order_by("-created_at")[offset:offset + limit]
+                )
+                kyc_ids = list(kyc_records.values_list("id", flat=True))
+                cache.set(cache_key, kyc_ids, timeout=300)
 
-            kyc_records = (
-                KYCDetails.objects.select_related("customer")
-                .order_by("-created_at")[offset:offset + limit]
-            )
+            # Always regenerate fresh presigned URLs
+            kyc_list = [format_kyc_data(kyc) for kyc in kyc_records]
             total = KYCDetails.objects.count()
 
-            kyc_list = [format_kyc_data(kyc) for kyc in kyc_records]
             response_data = {
                 "status": "success",
                 "status_code": 200,
@@ -666,8 +721,6 @@ def admin_customer_kyc_details(request):
                 "total_count": total,
                 "kyc_list": kyc_list
             }
-
-            cache.set(cache_key, response_data, timeout=300)  # 5 min
             return JsonResponse(response_data, status=200)
 
         elif action == "view_more" and customer_id:
@@ -726,8 +779,6 @@ def admin_customer_kyc_details(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-
-
 def format_nominee(n):
     s3_base_url = settings.AWS_S3_BUCKET_URL
     return {

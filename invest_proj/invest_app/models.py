@@ -73,6 +73,7 @@ class KYCDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
     admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)    
     role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)
+    
     pan_number = models.CharField(max_length=10, unique=True, null=True, blank=True)
     pan_request_id = models.CharField(max_length=100, null=True, blank=True)
     pan_group_id = models.CharField(max_length=100, null=True, blank=True)

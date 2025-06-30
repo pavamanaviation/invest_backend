@@ -1405,66 +1405,6 @@ def get_aadhar_verification_status(request):
 
 
 # ----------------------------------------
-
-# @csrf_exempt
-# def aadhar_lite_verification_view(request):
-#     if request.method != 'POST':
-#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
-
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = data.get('customer_id')
-#         aadhar_number = data.get('aadhar_number')
-
-#         session_customer_id = request.session.get('customer_id')
-#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-#         if not customer_id:
-#             return JsonResponse({'error': 'customer_id is required'}, status=400)
-
-#         customer = get_object_or_404(CustomerRegister, id=customer_id)
-#         kyc = KYCDetails.objects.filter(customer=customer).first()
-
-#         # Case: aadhar already verified
-#         if kyc and kyc.aadhar_status == 1:
-#             return JsonResponse({
-#                 "action": "view_only",
-#                 "message": "aadhar already verified.",
-#                 "idfy_aadhar_status": kyc.idfy_aadhar_status,
-#                 "aadhar_status": kyc.aadhar_status,
-#             }, status=200)
-
-#         if not aadhar_number:
-#             return JsonResponse({'error': 'aadhar_number is required for verification'}, status=400)
-
-#         task_id = str(uuid.uuid4())
-#         result = verify_aadhar_sync(aadhar_number, task_id)
-
-#         idfy_aadhar_status = result.get("status", None)
-#         aadhar_status = 1 if idfy_aadhar_status == "completed" else 0
-
-#         KYCDetails.objects.update_or_create(
-#             customer=customer,
-#             defaults={
-#                 "aadhar_number": aadhar_number,
-#                 "aadhar_status": aadhar_status,
-#                 "idfy_aadhar_status": idfy_aadhar_status,
-#                 "aadhar_task_id": task_id
-#             }
-#         )
-#         return JsonResponse({
-#             "action": "verify",
-#             "message": "aadhar verification completed successfully.",
-#             "aadhar_status": aadhar_status,
-#             "idfy_aadhar_status": idfy_aadhar_status,
-#             "task_id": task_id,
-#             "result": result
-#         }, status=200)
-
-#     except Exception as e:
-#         return JsonResponse({'error': str(e)}, status=500)
-
 @csrf_exempt
 def bank_account_verification_view(request):
     if request.method != 'POST':

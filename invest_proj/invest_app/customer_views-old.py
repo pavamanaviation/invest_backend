@@ -1900,3 +1900,69 @@ def payment_status_check(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+
+# @csrf_exempt
+# def pan_verification_request_view(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST allowed."}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.get('customer_id')
+#         pan_number = data.get('pan_number')
+#         first_name = data.get('first_name')
+#         last_name = data.get('last_name')
+#         dob = data.get('dob')
+
+#         session_customer_id = request.session.get('customer_id')
+#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+
+#         if not all([customer_id, pan_number, first_name, last_name, dob]):
+#             return JsonResponse({"error": "PAN number, first name, last name, and DOB are required."}, status=400)
+
+#         full_name = f"{first_name} {last_name}".strip()
+
+#         customer = get_object_or_404(CustomerRegister.objects.select_related('customermoredetails'), id=customer_id)
+
+#         kyc = KYCDetails.objects.filter(customer=customer).first()
+#         if kyc and kyc.pan_status == 1:
+#             return JsonResponse({
+#                 "action": "view_only",
+#                 "message": "PAN already verified.",
+#                 "pan_status": kyc.pan_status
+#             }, status=200)
+
+#         task_id = str(uuid.uuid4())
+#         response_data = send_pan_verification_request(pan_number, full_name, dob, task_id)
+
+#         if 'request_id' in response_data:
+#             KYCDetails.objects.update_or_create(
+#                 customer=customer,
+#                 defaults={
+#                     "pan_number": pan_number,
+#                     "pan_request_id": response_data["request_id"],
+#                     "pan_group_id": settings.IDFY_TEST_GROUP_ID,
+#                     "pan_task_id": task_id,
+#                     "pan_status": 1,
+#                     "first_name": first_name,
+#                     "last_name": last_name,
+#                     "updated_at": now()
+#                 }
+#             )
+
+#             return JsonResponse({
+#                 "action": "verify",
+#                 "message": "PAN verification initiated.",
+#                 "request_id": response_data["request_id"],
+#                 "task_id": task_id,
+#                 "pan_status": 1,
+#                 "raw_response": response_data
+#             }, status=200)
+
+#         return JsonResponse({"error": response_data}, status=500)
+
+#     except json.JSONDecodeError:
+#         return JsonResponse({"error": "Invalid JSON."}, status=400)
+#     except Exception as e:
+#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)

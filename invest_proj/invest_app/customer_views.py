@@ -7,7 +7,7 @@ from invest_app.utils.idfy_verification import (
     verify_bank_account_sync
 )
 from .utils.s3_helper import upload_to_s3, generate_presigned_url
-from .utils.idfy_verification import check_idfy_status_by_request_id, submit_idfy_aadhar_ocr, submit_idfy_pan_ocr, check_idfy_task_status
+from .utils.idfy_verification import check_idfy_status_by_request_id, submit_idfy_aadhar_ocr, submit_idfy_pan_ocr, check_idfy_task_status, submit_idfy_pan_verification
 
 
 def get_indian_time():
@@ -734,71 +734,6 @@ def customer_more_details(request):
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
-# @csrf_exempt
-# def pan_verification_request_view(request):
-#     if request.method != 'POST':
-#         return JsonResponse({"error": "Only POST allowed."}, status=405)
-
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = data.get('customer_id')
-#         pan_number = data.get('pan_number')
-#         first_name = data.get('first_name')
-#         last_name = data.get('last_name')
-#         dob = data.get('dob')
-
-#         session_customer_id = request.session.get('customer_id')
-#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-#         if not all([customer_id, pan_number, first_name, last_name, dob]):
-#             return JsonResponse({"error": "PAN number, first name, last name, and DOB are required."}, status=400)
-
-#         full_name = f"{first_name} {last_name}".strip()
-
-#         customer = get_object_or_404(CustomerRegister.objects.select_related('customermoredetails'), id=customer_id)
-
-#         kyc = KYCDetails.objects.filter(customer=customer).first()
-#         if kyc and kyc.pan_status == 1:
-#             return JsonResponse({
-#                 "action": "view_only",
-#                 "message": "PAN already verified.",
-#                 "pan_status": kyc.pan_status
-#             }, status=200)
-
-#         task_id = str(uuid.uuid4())
-#         response_data = send_pan_verification_request(pan_number, full_name, dob, task_id)
-
-#         if 'request_id' in response_data:
-#             KYCDetails.objects.update_or_create(
-#                 customer=customer,
-#                 defaults={
-#                     "pan_number": pan_number,
-#                     "pan_request_id": response_data["request_id"],
-#                     "pan_group_id": settings.IDFY_TEST_GROUP_ID,
-#                     "pan_task_id": task_id,
-#                     "pan_status": 1,
-#                     "first_name": first_name,
-#                     "last_name": last_name,
-#                     "updated_at": now()
-#                 }
-#             )
-
-#             return JsonResponse({
-#                 "action": "verify",
-#                 "message": "PAN verification initiated.",
-#                 "request_id": response_data["request_id"],
-#                 "task_id": task_id,
-#                 "pan_status": 1,
-#                 "raw_response": response_data
-#             }, status=200)
-
-#         return JsonResponse({"error": response_data}, status=500)
-
-#     except json.JSONDecodeError:
-#         return JsonResponse({"error": "Invalid JSON."}, status=400)
-#     except Exception as e:
-#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 # -----------------------------------------
 
 
@@ -898,23 +833,35 @@ def verify_pan_document(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 
-# @csrf_exempt
-# def get_pan_verification_status(request):
-#     task_id = request.GET.get('task_id')
-#     request_id = request.GET.get('request_id')
+# def get_customer_pan_path(customer_id, first_name, last_name):
+#     s3 = boto3.client(
+#         's3',
+#         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+#         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+#         region_name=settings.AWS_S3_REGION_NAME
+#     )
 
-#     if not task_id and not request_id:
-#         return JsonResponse({'error': 'Provide task_id or request_id'}, status=400)
+#     bucket_name = settings.AWS_STORAGE_BUCKET_NAME
+#     customer_folder = f'customerdoc/{customer_id}_{first_name.lower()}{last_name.lower()}/'
 
-#     if task_id:
-#         status_code, result = check_idfy_task_status(task_id)
-#     else:
-#         status_code, result = check_idfy_status_by_request_id(request_id)
+#     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=customer_folder)
+#     if 'Contents' not in response:
+#         return None
 
-#     return JsonResponse({'status': result.get('status'), 'result': result.get('result', {})})
-
-
-def get_customer_pan_path(customer_id, first_name, last_name):
+#     for obj in response['Contents']:
+#         key = obj['Key']
+#         if 'pan_' in key.lower():
+#             return key  # Return PAN path
+#     return None
+def get_customer_document_path(customer_id, first_name, last_name, doc_type):
+    """
+    Fetch the S3 key/path of the specified document type (PAN or Aadhar) for a customer.
+    :param customer_id: int
+    :param first_name: str
+    :param last_name: str
+    :param doc_type: str ("pan" or "aadhar")
+    :return: str or None (S3 key)
+    """
     s3 = boto3.client(
         's3',
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
@@ -931,78 +878,217 @@ def get_customer_pan_path(customer_id, first_name, last_name):
 
     for obj in response['Contents']:
         key = obj['Key']
-        if 'pan_' in key.lower():
-            return key  # Return PAN path
-    return None
+        if f'{doc_type.lower()}_' in key.lower():
+            return key  # Return PAN or Aadhar path
 
+    return None
 
 @csrf_exempt
 def get_pan_verification_status(request):
-    request_id = request.GET.get('request_id')
-    customer_id = request.GET.get('customer_id')
-
-    if not request_id or not customer_id:
-        return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
+    import traceback
 
     try:
+        request_id = request.GET.get('request_id')
+        customer_id = request.GET.get('customer_id')
+
+        if not request_id or not customer_id:
+            return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
+
+        # Fetch customer
         customer = CustomerRegister.objects.get(id=customer_id)
-    except CustomerRegister.DoesNotExist:
-        return JsonResponse({'error': 'Customer not found'}, status=404)
 
-    try:
-        customer = CustomerRegister.objects.get(id=customer_id)
-
-        # Fetch pan_path from S3
-        pan_path = get_customer_pan_path(customer.id, customer.first_name, customer.last_name)
-
+        # Get OCR result by request_id
         status_code, result = check_idfy_status_by_request_id(request_id)
-        print("Raw IDfy result:", result)
+        print("🧠 IDfy raw result:", result)
 
-        if isinstance(result, list):
-            if not result:
-                return JsonResponse({'error': 'No result found for this request ID'}, status=404)
+        # If list, take the first item
+        if isinstance(result, list) and result:
             result = result[0]
 
-        status = result.get("status")
         extraction = result.get("result", {}).get("extraction_output", {})
+        pan_number = extraction.get("id_number")
+        pan_name = extraction.get("name_on_card")
+        pan_dob = extraction.get("date_of_birth")
 
-        if status == "completed":
-            KYCDetails.objects.update_or_create(
-                customer=customer,
-                defaults={
-                    "pan_number": extraction.get("id_number"),
-                    "pan_name": extraction.get("name_on_card"),
-                    "pan_dob": extraction.get("date_of_birth"),
-                    "pan_task_id": result.get("task_id", ""),
-                    "pan_group_id": settings.IDFY_GROUP_ID,
-                    "pan_request_id": request_id,
-                    "idfy_pan_status": status,
-                    "pan_status": 1,
-                    "pan_path": pan_path
-
-                }
-            )
-
+        if not all([pan_name, pan_dob, pan_number]):
             return JsonResponse({
-                'status': 'completed',
-                'result': extraction,
-                'message': 'KYC details updated successfully.'
-            })
+                'status': 'ocr_failed',
+                'message': 'Missing extracted data',
+                'ocr_data': extraction
+            }, status=422)
+
+        print("🔍 Using extracted PAN data:", pan_number, pan_name, pan_dob)
+
+        # ✅ Submit source verification without file
+        verify_status_code, verify_response, verify_task_id, verify_request_id = submit_idfy_pan_verification(
+            name=pan_name,
+            dob=pan_dob,
+            pan_number=pan_number
+        )
+
+        print("✅ Submission response:", verify_status_code)
+        print("📦 API response body:", verify_response)
+
+        if verify_status_code not in [200, 202]:
+            return JsonResponse({
+                'error': 'Source verification submission failed',
+                'ocr_data': extraction,
+                'response': verify_response
+            }, status=500)
 
         return JsonResponse({
-            'status': status,
-            'result': extraction,
-            'message': 'PAN verification not yet completed.'
+            'status': 'submitted',
+            'message': 'Pan number verification started',
+            'source_task_id': verify_task_id,
+            'request_id': verify_request_id,
+            'ocr_data': extraction
         })
 
     except Exception as e:
-        # import traceback
-        # traceback.print_exc()
-        return JsonResponse({'error': f'Error fetching status: {str(e)}'}, status=500)
+        print("🔥 Exception occurred during PAN verification submission")
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+    
+@csrf_exempt
+def get_pan_source_verification_status(request):
+    request_id = request.GET.get("request_id")
+    customer_id = request.GET.get("customer_id")
+
+    if not request_id or not customer_id:
+        return JsonResponse({'error': 'Missing request_id or customer_id'}, status=400)
+
+    try:
+        customer = CustomerRegister.objects.get(id=customer_id)
+
+        # Resolve task_id using request_id
+        status_code, results = check_idfy_status_by_request_id(request_id)
+        if isinstance(results, list) and results:
+            result = results[0]
+        else:
+            result = results
+
+        task_id = result.get("task_id")
+        status = result.get("status")
+
+        if status != "completed":
+            return JsonResponse({'status': 'pending', 'message': 'Source verification still pending'}, status=202)
+
+        source_output = result.get("result", {}).get("source_output", {})
+        name_match = source_output.get("name_match")
+        dob_match = source_output.get("dob_match")
+        pan_status = source_output.get("pan_status")
+
+        if not (name_match and dob_match and pan_status == "Existing and Valid. PAN is Operative"):
+            return JsonResponse({
+                'status': 'failed',
+                'message': 'Source verification mismatch',
+                'details': source_output,
+                'raw_result': result
+            }, status=422)
+
+        matched_data = {
+            "id_number": source_output.get("input_details", {}).get("input_pan_number"),
+            "name": source_output.get("input_details", {}).get("input_name"),
+            "dob": source_output.get("input_details", {}).get("input_dob")
+        }
+        admin = Admin.objects.only("id").first()
+        if not admin:
+            return JsonResponse({"error": "Admin not found."}, status=500)
+
+        KYCDetails.objects.update_or_create(
+            customer=customer,
+            defaults={
+                "pan_number": matched_data.get("id_number"),
+                "pan_name": matched_data.get("name"),
+                "pan_dob": matched_data.get("dob"),
+                "pan_task_id": task_id,
+                "pan_group_id": settings.IDFY_GROUP_ID,
+                "idfy_pan_status": status,
+                "pan_request_id": request_id,
+                "pan_status": 1,
+                "admin":admin,
+                "pan_path": get_customer_document_path(customer.id, customer.first_name, customer.last_name, "pan"),
+            }
+        )
+
+        return JsonResponse({
+            'status': 'verified',
+            'message': 'Source verification successful',
+            'verified_data': matched_data
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'error': str(e)}, status=500)
+
+# @csrf_exempt
+# def get_pan_verification_status(request):
+#     request_id = request.GET.get('request_id')
+#     customer_id = request.GET.get('customer_id')
+
+#     if not request_id or not customer_id:
+#         return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
+
+#     try:
+#         customer = CustomerRegister.objects.get(id=customer_id)
+#     except CustomerRegister.DoesNotExist:
+#         return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#     try:
+#         customer = CustomerRegister.objects.get(id=customer_id)
+
+#         # Fetch pan_path from S3
+#         pan_path = get_customer_document_path(customer.id, customer.first_name, customer.last_name,'pan')
+
+#         status_code, result = check_idfy_status_by_request_id(request_id)
+#         print("Raw IDfy result:", result)
+
+#         if isinstance(result, list):
+#             if not result:
+#                 return JsonResponse({'error': 'No result found for this request ID'}, status=404)
+#             result = result[0]
+
+#         status = result.get("status")
+#         extraction = result.get("result", {}).get("extraction_output", {})
+
+#         if status == "completed":
+#             KYCDetails.objects.update_or_create(
+#                 customer=customer,
+#                 defaults={
+#                     "pan_number": extraction.get("id_number"),
+#                     "pan_name": extraction.get("name_on_card"),
+#                     "pan_dob": extraction.get("date_of_birth"),
+#                     "pan_task_id": result.get("task_id", ""),
+#                     "pan_group_id": settings.IDFY_GROUP_ID,
+#                     "pan_request_id": request_id,
+#                     "idfy_pan_status": status,
+#                     "pan_status": 1,
+#                     "pan_path": pan_path
+
+#                 }
+#             )
+
+#             return JsonResponse({
+#                 'status': 'completed',
+#                 'result': extraction,
+#                 'message': 'KYC details updated successfully.'
+#             })
+
+#         return JsonResponse({
+#             'status': status,
+#             'result': extraction,
+#             'message': 'PAN verification not yet completed.'
+#         })
+
+#     except Exception as e:
+#         # import traceback
+#         # traceback.print_exc()
+#         return JsonResponse({'error': f'Error fetching status: {str(e)}'}, status=500)
 
 def generate_customer_file_key(file_obj, customer, doc_type='pan', prefix='customerdoc'):
     customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
-    customer_folder = f"{prefix}/{customer.id}{customer_name}"
+    customer_folder = f"{prefix}/{customer.id}_{customer_name}"
     file_ext = file_obj.name.split('.')[-1].lower()
     file_key = f"{customer_folder}/{doc_type}_{customer_name}_{uuid.uuid4()}.{file_ext}"
     return file_key, customer_name, customer_folder, file_ext
@@ -1036,7 +1122,7 @@ def verify_aadhar_document(request):
 
     aadhar_file = request.FILES.get('aadhar_doc')
     if not aadhar_file:
-        return JsonResponse({'error': 'Aadhaar document is required'}, status=400)
+        return JsonResponse({'error': 'aadhar document is required'}, status=400)
 
     try:
         from .models import KYCDetails, CustomerRegister
@@ -1057,7 +1143,7 @@ def verify_aadhar_document(request):
         # file_key = upload_to_s3(aadhar_file, customer=customer, doc_type='aadhar')
         # file_url = generate_presigned_url(file_key, expires_in=300)
 
-        # Submit to IDfy Aadhaar OCR
+        # Submit to IDfy aadhar OCR
         status_code, response_json, task_id = submit_idfy_aadhar_ocr(file_url)
         if status_code not in [200, 202]:
             return JsonResponse({
@@ -1065,113 +1151,320 @@ def verify_aadhar_document(request):
                 'status_code': status_code,
                 'details': response_json
             }, status=500)
+        admin = Admin.objects.only("id").first()
+        if not admin:
+            return JsonResponse({"error": "Admin not found."}, status=500)
 
         # Poll for result
         for _ in range(5):
             time.sleep(2)
             status_code, result = check_idfy_task_status(task_id)
             if result.get("status") == "completed":
-                aadhar_data = result.get("result", {})
 
+                aadhar_data = result.get("result", {})
+                # 🧠 Fetch verified PAN details
+                kyc_pan = KYCDetails.objects.filter(customer=customer, pan_status=1).first()
+                if not kyc_pan:
+                    return JsonResponse({
+                        "status": "failed",
+                        "message": "PAN verification is required before aadhar verification."
+                    }, status=400)
+
+                # Normalize names and dob
+                aadhar_name = aadhar_data.get("name_on_card", "").strip().lower()
+                aadhar_dob = str(aadhar_data.get("date_of_birth"))
+                pan_name = kyc_pan.pan_name.strip().lower()
+                pan_dob = str(kyc_pan.pan_dob)
+
+                # Match aadhar with PAN
+                if aadhar_name != pan_name or aadhar_dob != pan_dob:
+                    return JsonResponse({
+                        "status": "failed",
+                        "message": "aadhar and PAN details do not match. Please verify your PAN number correctly.",
+                        "pan_name": kyc_pan.pan_name,
+                        "aadhar_name": aadhar_data.get("name_on_card"),
+                        "pan_dob": pan_dob,
+                        "aadhar_dob": aadhar_dob
+                    }, status=422)
+
+                # ✅ Store aadhar data after match
                 kyc, created = KYCDetails.objects.update_or_create(
                     customer=customer,
                     defaults={
-                        "aadhar_number": aadhar_data.get("aadhaar_number"),
-                        "aadhar_name": aadhar_data.get("full_name"),
-                        "aadhar_dob": aadhar_data.get("dob"),
+                        "aadhar_number": aadhar_data.get("id_number"),
+                        "aadhar_name": aadhar_data.get("name_on_card"),
+                        "aadhar_dob": aadhar_data.get("date_of_birth"),
+                        "aadhar_gender": aadhar_data.get("gender"),            
                         "aadhar_task_id": task_id,
                         "aadhar_request_id": result.get("request_id"),
                         "idfy_aadhar_status": result.get("status"),
                         "aadhar_status": 1,
                         "aadhar_path": file_key,
+                        "admin": admin,
                     }
                 )
 
                 return JsonResponse({
                     'status': 'success',
+                    'message': 'aadhar KYC matched with PAN and saved successfully.',
                     'aadhar_data': aadhar_data,
                     'request_id': result.get("request_id"),
                     'task_id': task_id,
                     'file_key': file_key,
-                    'file_url': file_url,
-                    'aadhar_path': file_key
+                    'file_url': file_url
                 })
 
+        # If timeout, return pending status
         return JsonResponse({
             'status': 'pending',
             'message': 'Verification in progress',
             'request_id': response_json.get("request_id"),
             'task_id': task_id,
             'file_key': file_key,
-            'file_url': file_url,
-            'aadhar_path': file_key
+            'file_url': file_url
         }, status=202)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
-
-
-
-# ----------------------------------------
-
+    
 @csrf_exempt
-def aadhar_lite_verification_view(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+def get_aadhar_verification_status(request):
+    request_id = request.GET.get('request_id')
+    customer_id = request.GET.get('customer_id')
+
+    if not request_id or not customer_id:
+        return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
 
     try:
-        data = json.loads(request.body)
-        customer_id = data.get('customer_id')
-        aadhar_number = data.get('aadhar_number')
+        customer = CustomerRegister.objects.get(id=customer_id)
+    except CustomerRegister.DoesNotExist:
+        return JsonResponse({'error': 'Customer not found'}, status=404)
 
-        session_customer_id = request.session.get('customer_id')
-        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+    try:
+        # Aadhaar document path
+        aadhar_path = get_customer_document_path(customer.id, customer.first_name, customer.last_name, 'aadhar')
 
-        if not customer_id:
-            return JsonResponse({'error': 'customer_id is required'}, status=400)
+        # Fetch from IDfy
+        status_code, result = check_idfy_status_by_request_id(request_id)
+        if isinstance(result, list):
+            if not result:
+                return JsonResponse({'error': 'No result found for this request ID'}, status=404)
+            result = result[0]
 
-        customer = get_object_or_404(CustomerRegister, id=customer_id)
-        kyc = KYCDetails.objects.filter(customer=customer).first()
+        status = result.get("status")
+        extraction = result.get("result", {}).get("extraction_output", {})
+        extracted_aadhar_number = extraction.get("id_number")
+        aadhar_name = extraction.get("name_on_card", "").strip().lower()
+        aadhar_dob = str(extraction.get("date_of_birth"))
 
-        # Case: Aadhaar already verified
-        if kyc and kyc.aadhar_status == 1:
+        if status != "completed":
             return JsonResponse({
-                "action": "view_only",
-                "message": "Aadhaar already verified.",
-                "idfy_aadhar_status": kyc.idfy_aadhar_status,
-                "aadhar_status": kyc.aadhar_status,
-            }, status=200)
+                'status': status,
+                'message': 'Aadhaar OCR still in progress.',
+                'extracted_data': extraction
+            }, status=202)
 
-        if not aadhar_number:
-            return JsonResponse({'error': 'aadhar_number is required for verification'}, status=400)
+        if not extracted_aadhar_number:
+            return JsonResponse({
+                "status": "failed",
+                "message": "Aadhaar number could not be extracted from the document."
+            }, status=400)
 
+        # ✅ Match Aadhaar name/DOB with PAN
+        kyc_pan = KYCDetails.objects.filter(customer=customer, pan_status=1).first()
+        if not kyc_pan:
+            return JsonResponse({
+                "status": "failed",
+                "message": "PAN verification is required before Aadhaar verification."
+            }, status=400)
+
+        pan_name = kyc_pan.pan_name.strip().lower()
+        pan_dob = str(kyc_pan.pan_dob)
+
+        if aadhar_name != pan_name or aadhar_dob != pan_dob:
+            return JsonResponse({
+                "status": "failed",
+                "message": "Aadhaar and PAN details do not match.",
+                "pan_name": kyc_pan.pan_name,
+                "aadhar_name": extraction.get("name_on_card"),
+                "pan_dob": pan_dob,
+                "aadhar_dob": aadhar_dob
+            }, status=422)
+
+        # ✅ Aadhaar name/DOB matched, now verify Aadhaar number
         task_id = str(uuid.uuid4())
-        result = verify_aadhar_sync(aadhar_number, task_id)
-
+        result = verify_aadhar_sync(extracted_aadhar_number, task_id)
         idfy_aadhar_status = result.get("status", None)
         aadhar_status = 1 if idfy_aadhar_status == "completed" else 0
+
+        if aadhar_status != 1:
+            return JsonResponse({
+                "status": "failed",
+                "message": "Aadhaar number verification failed.",
+                "idfy_aadhar_status": idfy_aadhar_status,
+                "aadhar_number": extracted_aadhar_number,
+                "response": result.get("result")
+            }, status=422)
+
+        # ✅ Save verified Aadhaar info
+        admin = Admin.objects.only("id").first()
+        if not admin:
+            return JsonResponse({"error": "Admin not found"}, status=500)
 
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
-                "aadhar_number": aadhar_number,
+                "aadhar_number": extracted_aadhar_number,
                 "aadhar_status": aadhar_status,
                 "idfy_aadhar_status": idfy_aadhar_status,
-                "aadhar_task_id": task_id
+                "aadhar_task_id": task_id,
+                "aadhar_request_id": request_id,
+                "aadhar_path": aadhar_path,
+                "admin": admin,
             }
         )
+
         return JsonResponse({
-            "action": "verify",
-            "message": "Aadhaar verification completed successfully.",
-            "aadhar_status": aadhar_status,
+            "status": "completed",
+            "message": "Aadhaar KYC verified successfully after name and DOB matched with PAN.",
+            "aadhar_number": extracted_aadhar_number,
             "idfy_aadhar_status": idfy_aadhar_status,
-            "task_id": task_id,
-            "result": result
-        }, status=200)
+            "task_id": task_id
+        })
 
     except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'error': f'Error verifying Aadhaar: {str(e)}'}, status=500)
+
+# @csrf_exempt
+# def get_aadhar_verification_status(request):
+#     request_id = request.GET.get('request_id')
+#     customer_id = request.GET.get('customer_id')
+
+#     if not request_id or not customer_id:
+#         return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
+
+#     try:
+#         customer = CustomerRegister.objects.get(id=customer_id)
+#     except CustomerRegister.DoesNotExist:
+#         return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#     try:
+#         # Get aadhar file path from S3
+#         aadhar_path = get_customer_document_path(customer.id, customer.first_name, customer.last_name, 'aadhar')
+
+#         # Fetch OCR result from IDfy
+#         status_code, result = check_idfy_status_by_request_id(request_id)
+#         print("Raw IDfy aadhar result:", result)
+
+#         if isinstance(result, list):
+#             if not result:
+#                 return JsonResponse({'error': 'No result found for this request ID'}, status=404)
+#             result = result[0]
+
+#         status = result.get("status")
+#         extraction = result.get("result", {}).get("extraction_output", {})
+#         admin = Admin.objects.only("id").first()
+#         if not admin:
+#             return JsonResponse({"error": "Admin not found."}, status=500)
+
+#         if status == "completed":
+#             KYCDetails.objects.update_or_create(
+#                 customer=customer,
+#                 defaults={
+#                     "aadhar_number": extraction.get("id_number"),
+#                     "aadhar_name": extraction.get("name_on_card"),
+#                     "aadhar_dob": extraction.get("date_of_birth"),
+#                     "aadhar_gender": extraction.get("gender"),
+#                     "aadhar_status": 1,  # mark verified
+#                     "aadhar_request_id": request_id,
+#                     "idfy_aadhar_status": status,
+#                     "aadhar_task_id": result.get("task_id", ""),
+#                     "aadhar_path": aadhar_path,
+#                     "admin": admin,
+#                 }
+#             )
+
+#             return JsonResponse({
+#                 'status': 'completed',
+#                 'result': extraction,
+#                 'message': 'aadhar KYC details updated successfully.'
+#             })
+
+#         return JsonResponse({
+#             'status': status,
+#             'result': extraction,
+#             'message': 'aadhar verification not yet completed.'
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'error': f'Error fetching status: {str(e)}'}, status=500)
+
+
+# ----------------------------------------
+
+# @csrf_exempt
+# def aadhar_lite_verification_view(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.get('customer_id')
+#         aadhar_number = data.get('aadhar_number')
+
+#         session_customer_id = request.session.get('customer_id')
+#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+
+#         if not customer_id:
+#             return JsonResponse({'error': 'customer_id is required'}, status=400)
+
+#         customer = get_object_or_404(CustomerRegister, id=customer_id)
+#         kyc = KYCDetails.objects.filter(customer=customer).first()
+
+#         # Case: aadhar already verified
+#         if kyc and kyc.aadhar_status == 1:
+#             return JsonResponse({
+#                 "action": "view_only",
+#                 "message": "aadhar already verified.",
+#                 "idfy_aadhar_status": kyc.idfy_aadhar_status,
+#                 "aadhar_status": kyc.aadhar_status,
+#             }, status=200)
+
+#         if not aadhar_number:
+#             return JsonResponse({'error': 'aadhar_number is required for verification'}, status=400)
+
+#         task_id = str(uuid.uuid4())
+#         result = verify_aadhar_sync(aadhar_number, task_id)
+
+#         idfy_aadhar_status = result.get("status", None)
+#         aadhar_status = 1 if idfy_aadhar_status == "completed" else 0
+
+#         KYCDetails.objects.update_or_create(
+#             customer=customer,
+#             defaults={
+#                 "aadhar_number": aadhar_number,
+#                 "aadhar_status": aadhar_status,
+#                 "idfy_aadhar_status": idfy_aadhar_status,
+#                 "aadhar_task_id": task_id
+#             }
+#         )
+#         return JsonResponse({
+#             "action": "verify",
+#             "message": "aadhar verification completed successfully.",
+#             "aadhar_status": aadhar_status,
+#             "idfy_aadhar_status": idfy_aadhar_status,
+#             "task_id": task_id,
+#             "result": result
+#         }, status=200)
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+
 @csrf_exempt
 def bank_account_verification_view(request):
     if request.method != 'POST':
@@ -1346,66 +1639,21 @@ def upload_pdf_document(request):
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
         
-# def upload_file_to_s3(file_obj, s3_key):
-#     s3 = boto3.client(
-#         's3',
-#         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-#         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-#         region_name=settings.AWS_S3_REGION_NAME,
-#     )
-
-#     # Determine content type
-#     content_type = getattr(file_obj, 'content_type', None)
-#     if not content_type:
-#         content_type, _ = mimetypes.guess_type(s3_key)
-#     content_type = content_type or 'application/octet-stream'
-
-#     # Upload
-#     s3.upload_fileobj(
-#         file_obj,
-#         settings.AWS_STORAGE_BUCKET_NAME,
-#         s3_key,
-#         ExtraArgs={'ContentType': content_type}
-#     )
-
-#     return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
-
-def upload_file_to_s3(file_obj, s3_key):
-    s3 = boto3.client(
-        's3',
+# -------------------------------------------------------
+def upload_file_to_s3(file_obj, file_key):
+    s3 = boto3.client('s3',
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_S3_REGION_NAME,
+        region_name=settings.AWS_S3_REGION_NAME
     )
-    content_type = getattr(file_obj, 'content_type', None)
-    if not content_type:
-        content_type, _ = mimetypes.guess_type(s3_key)
-    content_type = content_type or 'application/octet-stream'
-    s3.upload_fileobj(
-        file_obj,
-        settings.AWS_STORAGE_BUCKET_NAME,
-        s3_key,
-        ExtraArgs={'ContentType': content_type}
-    )
-    return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{s3_key}"
 
-def delete_s3_file(key):
-    s3 = boto3.client('s3',
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
-    )
-    s3.delete_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=key)
+    mime_type, _ = mimetypes.guess_type(file_key)
+    extra_args = {'ContentType': mime_type} if mime_type else {}
 
-def copy_s3_file(old_key, new_key):
-    s3 = boto3.client('s3',
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
-    )
-    s3.copy_object(
-        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
-        CopySource={'Bucket': settings.AWS_STORAGE_BUCKET_NAME, 'Key': old_key},
-        Key=new_key
-    )
+    s3.upload_fileobj(file_obj, settings.AWS_STORAGE_BUCKET_NAME, file_key, ExtraArgs=extra_args)
+    # return file_key
+    return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{file_key}"
+
 
 @csrf_exempt
 def initiate_nominee_registration(request):
@@ -1417,8 +1665,8 @@ def initiate_nominee_registration(request):
         mode = data.get("mode", "create").lower()
         session_customer_id = request.session.get("customer_id")
 
-        if not customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Customer ID mismatch."}, status=403)
+        # if not customer_id or int(customer_id) != int(session_customer_id):
+        #     return JsonResponse({"error": "Customer ID mismatch."}, status=403)
 
         if mode == "edit":
             required_fields = ["nominee_id", "first_name", "last_name", "relation"]
@@ -1469,6 +1717,7 @@ def initiate_nominee_registration(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+    
 @csrf_exempt
 def verify_and_update_nominee(request):
     if request.method != "POST":
@@ -1478,14 +1727,14 @@ def verify_and_update_nominee(request):
         data = request.POST
         otp = data.get("otp")
         customer_id = data.get("customer_id")
-        nominee_id = data.get("nominee_id")
         mode = "edit"
 
         session_customer_id = request.session.get("customer_id")
-        if not customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized request."}, status=403)
-        if not otp or not nominee_id:
-            return JsonResponse({"error": "OTP and nominee_id are required."}, status=400)
+        # if not customer_id or int(customer_id) != int(session_customer_id):
+        #     return JsonResponse({"error": "Unauthorized request."}, status=403)
+
+        if not otp:
+            return JsonResponse({"error": "OTP is required."}, status=400)
 
         customer = CustomerRegister.objects.get(id=customer_id)
         if str(customer.otp) != otp:
@@ -1493,142 +1742,55 @@ def verify_and_update_nominee(request):
         if not customer.is_otp_valid():
             return JsonResponse({"error": "OTP expired."}, status=400)
 
-        # Clear OTP
         customer.otp = None
         customer.changed_on = None
         customer.save(update_fields=["otp", "changed_on"])
 
         key_prefix = f"{mode}_nominee_{customer_id}"
         nominee_data = cache.get(f"{key_prefix}_data")
+
+        if not nominee_data or "nominee_id" not in nominee_data:
+            return JsonResponse({"error": "Session expired or missing nominee_id."}, status=400)
+
+        nominee = NomineeDetails.objects.filter(id=nominee_data["nominee_id"], customer=customer).first()
+        if not nominee:
+            return JsonResponse({"error": "Nominee not found."}, status=404)
+
+        # Optional file updates
         files_data = cache.get(f"{key_prefix}_files")
-        address_file_name = cache.get(f"{key_prefix}_address_file_name")
-        id_file_name = cache.get(f"{key_prefix}_id_file_name")
+        addr_ext = cache.get(f"{key_prefix}_addr_ext")
+        id_ext = cache.get(f"{key_prefix}_id_ext")
 
-        if not nominee_data:
-            return JsonResponse({"error": "Session expired or incomplete nominee data."}, status=400)
+        if files_data:
+            if "address_proof_file" in files_data:
+                address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
+                address_file.name = f"address{addr_ext}"
+                address_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
+                upload_file_to_s3(address_file, address_key)
+                nominee.address_proof_path = address_key
 
-        nominee = NomineeDetails.objects.get(id=nominee_id, customer=customer, nominee_status=1)
+            if "id_proof_file" in files_data:
+                id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
+                id_file.name = f"id{id_ext}"
+                id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
+                upload_file_to_s3(id_file, id_key)
+                nominee.id_proof_path = id_key
 
-        # Build new file paths using cached file names
-        customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
-        nominee_name = f"{nominee_data['first_name']}{nominee_data['last_name']}".replace(" ", "")
-        folder = f"{customer.id}_{customer_name}"
-
-        addr_ext = os.path.splitext(address_file_name or ".pdf")[1].lower()
-        id_ext = os.path.splitext(id_file_name or ".pdf")[1].lower()
-        new_address_path = f"customerdoc/{folder}/nominee_address_proof_{nominee_name}{addr_ext}"
-        new_id_path = f"customerdoc/{folder}/nominee_id_proof_{nominee_name}{id_ext}"
-
-        # Upload new files or rename if not changed
-        if files_data and address_file_name and id_file_name:
-            upload_file_to_s3(BytesIO(files_data["address_proof_file"].encode("latin1")), new_address_path)
-            upload_file_to_s3(BytesIO(files_data["id_proof_file"].encode("latin1")), new_id_path)
-
-            # Delete old files if file names changed
-            if nominee.address_proof_path and nominee.address_proof_path != new_address_path:
-                delete_s3_file(nominee.address_proof_path)
-            if nominee.id_proof_path and nominee.id_proof_path != new_id_path:
-                delete_s3_file(nominee.id_proof_path)
-        else:
-            # Just rename on S3 if no new file uploaded
-            if nominee.address_proof_path and nominee.address_proof_path != new_address_path:
-                copy_s3_file(nominee.address_proof_path, new_address_path)
-                delete_s3_file(nominee.address_proof_path)
-            if nominee.id_proof_path and nominee.id_proof_path != new_id_path:
-                copy_s3_file(nominee.id_proof_path, new_id_path)
-                delete_s3_file(nominee.id_proof_path)
-
-        # Update nominee record
-        nominee.address_proof_path = new_address_path
-        nominee.id_proof_path = new_id_path
-
-        for field in ["first_name", "last_name", "relation", "share", "address_proof"]:
-            if field in nominee_data:
-                setattr(nominee, field, nominee_data[field])
-        if "dob" in nominee_data:
-            nominee.dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
-
+        # Update fields
+        nominee.first_name = nominee_data["first_name"]
+        nominee.last_name = nominee_data["last_name"]
+        nominee.relation = nominee_data["relation"]
         nominee.save()
 
-        # Clear cache
-        for suffix in ["data", "files", "address_file_name", "id_file_name"]:
+        # Clean cache
+        for suffix in ["data", "files", "addr_ext", "id_ext"]:
             cache.delete(f"{key_prefix}_{suffix}")
 
-        return JsonResponse({"message": "Nominee updated successfully."}, status=200)
+        return JsonResponse({"message": "Nominee updated successfully.", "nominee_id": nominee.id})
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-# @csrf_exempt
-# def verify_and_update_nominee(request):
-#     if request.method != "POST":
-#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
-
-#     try:
-#         data = request.POST
-#         otp = data.get("otp")
-#         customer_id = data.get("customer_id")
-#         nominee_id=data.get("nominee_id")
-#         mode = "edit"
-
-#         session_customer_id = request.session.get("customer_id")
-#         if not customer_id or int(customer_id) != int(session_customer_id):
-#             return JsonResponse({"error": "Unauthorized request."}, status=403)
-#         if not otp:
-#             return JsonResponse({"error": "OTP is required."}, status=400)
-
-#         customer = CustomerRegister.objects.get(id=customer_id)
-#         if str(customer.otp) != otp:
-#             return JsonResponse({"error": "Invalid OTP."}, status=400)
-#         if not customer.is_otp_valid():
-#             return JsonResponse({"error": "OTP expired."}, status=400)
-
-#         customer.otp = None
-#         customer.changed_on = None
-#         customer.save(update_fields=["otp", "changed_on"])
-
-#         # Load cached nominee edit data
-#         key_prefix = f"{mode}_nominee_{customer_id}"
-#         nominee_data = cache.get(f"{key_prefix}_data")
-#         files_data = cache.get(f"{key_prefix}_files")
-#         address_file_name = cache.get(f"{key_prefix}_address_file_name")
-#         id_file_name = cache.get(f"{key_prefix}_id_file_name")
-
-#         if not nominee_data or not files_data or not address_file_name or not id_file_name:
-#             return JsonResponse({"error": "Session expired or incomplete nominee data."}, status=400)
-
-#         dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
-#         customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
-#         nominee_name = f"{nominee_data['first_name']}{nominee_data['last_name']}".replace(" ", "")
-#         folder = f"{customer.id}_{customer_name}"
-
-#         addr_ext = os.path.splitext(address_file_name)[1].lower()
-#         id_ext = os.path.splitext(id_file_name)[1].lower()
-#         address_key = f"customerdoc/{folder}/nominee_address_proof_{nominee_name}{addr_ext}"
-#         id_key = f"customerdoc/{folder}/nominee_id_proof_{nominee_name}{id_ext}"
-
-#         upload_file_to_s3(BytesIO(files_data["address_proof_file"].encode("latin1")), address_key)
-#         upload_file_to_s3(BytesIO(files_data["id_proof_file"].encode("latin1")), id_key)
-
-#         nominee = NomineeDetails.objects.filter(customer=customer, nominee_status=1).first()
-#         if not nominee:
-#             return JsonResponse({"error": "Nominee not found for update."}, status=404)
-
-#         for field in ["first_name", "last_name", "relation", "share", "address_proof"]:
-#             setattr(nominee, field, nominee_data[field])
-#         nominee.dob = dob
-#         nominee.address_proof_path = address_key
-#         nominee.id_proof_path = id_key
-#         nominee.save()
-
-#         # Clear cache
-#         for suffix in ["data", "files", "address_file_name", "id_file_name"]:
-#             cache.delete(f"{key_prefix}_{suffix}")
-
-#         return JsonResponse({"message": "Nominee updated successfully."}, status=200)
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
 @csrf_exempt
 def verify_and_save_nominee(request):
     if request.method != "POST":
@@ -1641,8 +1803,9 @@ def verify_and_save_nominee(request):
         mode = "create"
 
         session_customer_id = request.session.get("customer_id")
-        if not customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized request."}, status=403)
+        # if not customer_id or int(customer_id) != int(session_customer_id):
+        #     return JsonResponse({"error": "Unauthorized request."}, status=403)
+
         if not otp:
             return JsonResponse({"error": "OTP is required."}, status=400)
 
@@ -1660,26 +1823,22 @@ def verify_and_save_nominee(request):
         key_prefix = f"{mode}_nominee_{customer_id}"
         nominee_data = cache.get(f"{key_prefix}_data")
         files_data = cache.get(f"{key_prefix}_files")
-        address_file_name = cache.get(f"{key_prefix}_address_file_name")
-        id_file_name = cache.get(f"{key_prefix}_id_file_name")
 
-        if not all([nominee_data, files_data, address_file_name, id_file_name]):
+        if not all([nominee_data, files_data]):
             return JsonResponse({"error": "Session expired or incomplete data."}, status=400)
 
-        dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
-        customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
-        nominee_name = f"{nominee_data['first_name']}{nominee_data['last_name']}".replace(" ", "")
-        folder = f"{customer.id}_{customer_name}"
+        # Upload files
+        address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
+        address_file.name = "address_proof.jpg"
+        id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
+        id_file.name = "id_proof.jpg"
 
-        addr_ext = os.path.splitext(address_file_name)[1].lower()
-        id_ext = os.path.splitext(id_file_name)[1].lower()
-        address_key = f"customerdoc/{folder}/nominee_address_proof_{nominee_name}{addr_ext}"
-        id_key = f"customerdoc/{folder}/nominee_id_proof_{nominee_name}{id_ext}"
+        addr_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
+        id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
+        upload_file_to_s3(address_file, addr_key)
+        upload_file_to_s3(id_file, id_key)
 
-        upload_file_to_s3(BytesIO(files_data["address_proof_file"].encode("latin1")), address_key)
-        upload_file_to_s3(BytesIO(files_data["id_proof_file"].encode("latin1")), id_key)
-
-        # Check for duplicate nominee
+        # Check for duplicate
         if NomineeDetails.objects.filter(
             customer=customer,
             first_name=nominee_data["first_name"],
@@ -1689,6 +1848,7 @@ def verify_and_save_nominee(request):
         ).exists():
             return JsonResponse({"error": "This nominee already exists for the customer."}, status=409)
 
+        dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
         admin = Admin.objects.only("id").first()
         if not admin:
             return JsonResponse({"error": "Admin not found."}, status=500)
@@ -1701,173 +1861,21 @@ def verify_and_save_nominee(request):
             dob=dob,
             share=nominee_data["share"],
             address_proof=nominee_data["address_proof"],
-            address_proof_path=address_key,
+            address_proof_path=addr_key,
             id_proof_path=id_key,
             admin=admin,
             nominee_status=1
         )
 
-        # Clean cache
-        for suffix in ["data", "files", "address_file_name", "id_file_name"]:
+        for suffix in ["data", "files"]:
             cache.delete(f"{key_prefix}_{suffix}")
 
         return JsonResponse({"message": "Nominee saved successfully.", "nominee_id": nominee.id})
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-
-# @csrf_exempt
-# def initiate_nominee_registration(request):
-#     if request.method != "POST":
-#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
-
-#     try:
-#         data = request.POST
-#         files = request.FILES
-
-#         session_customer_id = request.session.get("customer_id")
-#         customer_id = data.get("customer_id")
-#         mode = data.get("mode", "create")  # can be 'create' or 'edit'
-        
-#         if not customer_id or int(customer_id) != int(session_customer_id):
-#             return JsonResponse({"error": "Customer ID mismatch."}, status=403)
-
-#         required_fields = ["first_name", "last_name", "relation", "dob", "address_proof","share"]
-#         file_required_fields = ["address_proof_file", "id_proof_file"]
-
-#         for field in required_fields:
-#             if not data.get(field):
-#                 return JsonResponse({"error": f"{field} is required."}, status=400)
-#         for field in file_required_fields:
-#             if field not in files:
-#                 return JsonResponse({"error": f"{field} is required."}, status=400)
-
-#         nominee_data = {
-#             "first_name": data["first_name"],
-#             "last_name": data["last_name"],
-#             "relation": data["relation"],
-#             "dob": data["dob"],
-#             "address_proof": data["address_proof"],
-#             "share":data["share"]
-#         }
-
-#         # Use session caching (File-based/LocMem)
-#         request.session["nominee_data"] = nominee_data
-#         request.session["nominee_address_file_name"] = files["address_proof_file"].name
-#         request.session["nominee_id_file_name"] = files["id_proof_file"].name
-#         request.session["nominee_files"] = {
-#             "address_proof_file": files["address_proof_file"].read().decode("latin1"),
-#             "id_proof_file": files["id_proof_file"].read().decode("latin1")
-#         }
-
-#         customer = CustomerRegister.objects.only("id", "mobile_no").get(id=customer_id)
-#         otp = generate_otp()
-#         customer.otp = otp
-#         customer.changed_on = timezone.now()
-#         customer.save(update_fields=["otp", "changed_on"])
-
-#         send_bulk_sms([str(customer.mobile_no)], otp)
-#         return JsonResponse({"message": "OTP sent to registered mobile."})
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
-
-# @csrf_exempt
-# def verify_and_save_nominee(request):
-#     if request.method != "POST":
-#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
-
-#     try:
-#         data = request.POST
-#         otp = data.get("otp")
-#         customer_id = data.get("customer_id")
-
-#         session_customer_id = request.session.get("customer_id")
-#         if not customer_id or int(customer_id) != int(session_customer_id):
-#             return JsonResponse({"error": "Invalid or unauthorized request."}, status=403)
-#         if not otp:
-#             return JsonResponse({"error": "OTP is required."}, status=403)
-
-#         customer = CustomerRegister.objects.only("id", "otp", "changed_on", "first_name", "last_name").get(id=customer_id)
-
-#         if str(customer.otp) != otp:
-#             return JsonResponse({"error": "Invalid OTP."}, status=400)
-#         if not customer.is_otp_valid():
-#             return JsonResponse({"error": "OTP expired."}, status=400)
-
-#         customer.otp = None
-#         customer.changed_on = None
-#         customer.save(update_fields=["otp", "changed_on"])
-
-#         nominee_data = request.session.get("nominee_data")
-#         if not nominee_data:
-#             return JsonResponse({"error": "Session expired. Please refill nominee form."}, status=400)
-
-#         first_name = nominee_data["first_name"]
-#         last_name = nominee_data["last_name"]
-#         relation = nominee_data["relation"]
-#         dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
-#         address_proof = nominee_data["address_proof"]
-#         share=nominee_data["share"]
-
-#         address_file_name = request.session.get("nominee_address_file_name")
-#         id_file_name = request.session.get("nominee_id_file_name")
-#         files_data = request.session.get("nominee_files")
-
-#         address_file_data = files_data["address_proof_file"].encode("latin1")
-#         id_file_data = files_data["id_proof_file"].encode("latin1")
-
-#         customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
-#         nominee_name = f"{first_name}{last_name}".replace(" ", "")
-#         folder_name = f"{customer.id}_{customer_name}"
-
-#         address_ext = os.path.splitext(address_file_name)[1].lower()
-#         id_ext = os.path.splitext(id_file_name)[1].lower()
-
-#         address_key = f"customerdoc/{folder_name}/nominee_address_proof_{nominee_name}{address_ext}"
-#         id_key = f"customerdoc/{folder_name}/nominee_id_proof_{nominee_name}{id_ext}"
-
-#         upload_file_to_s3(BytesIO(address_file_data), address_key)
-#         upload_file_to_s3(BytesIO(id_file_data), id_key)
-
-#         if NomineeDetails.objects.filter(
-#             customer=customer,
-#             first_name=first_name,
-#             last_name=last_name,
-#             relation=relation,
-#             nominee_status=1
-#         ).exists():
-#             return JsonResponse({"error": "This nominee already exists for the customer."}, status=409)
-
-#         admin = Admin.objects.only("id").order_by("id").first()
-#         if not admin:
-#             return JsonResponse({"error": "No admin found for assignment."}, status=500)
-
-#         nominee = NomineeDetails.objects.create(
-#             customer=customer,
-#             first_name=first_name,
-#             last_name=last_name,
-#             relation=relation,
-#             dob=dob,
-#             share=share,
-#             address_proof=address_proof,
-#             address_proof_path=address_key,
-#             id_proof_path=id_key,
-#             admin=admin,
-#             nominee_status=1
-#         )
-
-#         for key in ["nominee_otp", "nominee_data", "nominee_otp_verified",
-#                     "nominee_address_file_name", "nominee_id_file_name", "nominee_files"]:
-#             request.session.pop(key, None)
-
-#         return JsonResponse({
-#             "message": "Nominee saved successfully.",
-#             "nominee_id": nominee.id
-#         })
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
+# ----------------`------------------------
+# `
 def get_s3_url(path):
     if path:
         return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{path}"

@@ -45,45 +45,127 @@ def check_idfy_status_by_request_id(request_id):
 
 
 
+def submit_idfy_pan_verification(name, dob, pan_number):
+    url = "https://eve.idfy.com/v3/tasks/async/verify_with_source/ind_pan"
+
+    headers = {
+        "Content-Type": "application/json",
+        "account-id": "e351a415009f/ebd20862-8dc6-421e-bd1c-0480a19485dc",
+        "api-key": "082618e6-1a00-4d5d-aefb-12f466fa4494"
+    }
+
+    task_id = str(uuid.uuid4())
+    payload = {
+        "task_id": task_id,
+        "group_id": "8e16424a-58fc-4ba4-ab20-5bc8e7c3c41e",
+        "data": {
+            "id_number": pan_number,
+            "full_name": name,
+            "dob": dob
+        }
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    try:
+        response_data = response.json()
+    except Exception:
+        response_data = {"error": "Invalid JSON response", "raw": response.text}
+
+    return response.status_code, response_data, task_id, response_data.get("request_id")
+
+# --------------------
 
 def submit_idfy_aadhar_ocr(file_url):
     headers = {
         "Content-Type": "application/json",
-        "apikey": settings.IDFY_API_KEY
+        "api-key": settings.IDFY_API_KEY,
+        "account-id": settings.IDFY_ACCOUNT_ID
     }
     payload = {
         "task_id": str(uuid.uuid4()),
         "group_id": settings.IDFY_GROUP_ID,
-        "data": {"document_url": file_url},
-        "workflow": "aadhaar-ocr"  
+        "data": {
+            "document1": file_url,
+            "consent": "yes"
+        }
     }
-
     response = requests.post(
-        f"{settings.IDFY_BASE_URL}/v3/tasks/async/verify_with_source/aadhaar_ocr",
+        f"{settings.IDFY_BASE_URL}/tasks/async/extract/ind_aadhar",
         headers=headers,
         json=payload
     )
     return response.status_code, response.json(), payload["task_id"]
 
-# ------------------------
 
-def verify_aadhar_sync(aadhar_number, task_id):
+def check_idfy_status_by_request_id(request_id):
+    headers = {
+        "api-key": settings.IDFY_API_KEY,
+        "account-id": settings.IDFY_ACCOUNT_ID
+    }
+
+    response = requests.get(
+        f"{settings.IDFY_BASE_URL}/tasks?request_id={request_id}",
+        headers=headers
+    )
+    return response.status_code, response.json()
+
+
+# ------------------------
+def verify_aadhar_sync(aadhaar_number, task_id):
+    import requests
+
     url = "https://eve.idfy.com/v3/tasks/sync/verify_with_source/aadhaar_lite"
     headers = {
         "Content-Type": "application/json",
-        "account-id": settings.IDFY_TEST_ACCOUNT_ID,
-        "api-key": settings.IDFY_TEST_API_KEY,
+        "account-id": settings.IDFY_TEST_ACCOUNT_ID,  # Replace with actual account ID
+        "api-key": settings.IDFY_TEST_API_KEY         # Replace with actual API key
     }
     payload = {
         "task_id": task_id,
-        "group_id": settings.IDFY_TEST_GROUP_ID,
+        "group_id": settings.IDFY_TEST_GROUP_ID,       # Replace with valid group ID
         "data": {
-            "aadhaar_number": aadhar_number
+            "aadhaar_number": aadhaar_number           # ✅ Use correct spelling
         }
     }
 
-    response = requests.post(url, headers=headers, json=payload)
-    return response.json()
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        status_code = response.status_code
+        try:
+            response_json = response.json()
+        except Exception:
+            response_json = {"error": "Invalid JSON", "raw": response.text}
+
+        return {
+            "status_code": status_code,
+            "status": response_json.get("status", ""),
+            "result": response_json
+        }
+
+    except requests.RequestException as e:
+        return {
+            "status_code": None,
+            "status": "failed",
+            "error": str(e)
+        }
+
+# def verify_aadhar_sync(aadhar_number, task_id):
+#     url = "https://eve.idfy.com/v3/tasks/sync/verify_with_source/aadhar_lite"
+#     headers = {
+#         "Content-Type": "application/json",
+#         "account-id": settings.IDFY_TEST_ACCOUNT_ID,
+#         "api-key": settings.IDFY_TEST_API_KEY,
+#     }
+#     payload = {
+#         "task_id": task_id,
+#         "group_id": settings.IDFY_TEST_GROUP_ID,
+#         "data": {
+#             "aadhar_number": aadhar_number
+#         }
+#     }
+
+#     response = requests.post(url, headers=headers, json=payload)
+#     return response.json()
     
 def verify_bank_account_sync(account_number, ifsc):
     IDFY_BANK_VERIFY_URL = settings.IDFY_BANK_VERIFY_URL

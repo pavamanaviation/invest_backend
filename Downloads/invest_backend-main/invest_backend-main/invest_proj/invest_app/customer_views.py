@@ -1453,6 +1453,75 @@ def get_aadhar_verification_status(request):
 
 
 # ----------------------------------------
+# @customer_login_required
+# @csrf_exempt
+# def bank_account_verification_view(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.session.get('customer_id')
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+#         account_number = data.get("account_number")
+#         ifsc = data.get("ifsc")
+
+#         session_customer_id = request.session.get('customer_id')
+#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+
+#         if not customer_id:
+#             return JsonResponse({'error': 'customer_id is required'}, status=400)
+
+#         customer = get_object_or_404(CustomerRegister, id=customer_id)
+#         kyc = KYCDetails.objects.filter(customer=customer).first()
+
+#         # Action: view_only
+#         if kyc and kyc.bank_status == 1:
+#             return JsonResponse({
+#                 "action": "view_only",
+#                 "message": "Bank account already verified.Please proceed for next.",
+#                 "bank_status": kyc.bank_status,
+#                 "idfy_bank_status": kyc.idfy_bank_status
+#             }, status=200)
+
+#         #Action: verify
+#         if not account_number or not ifsc:
+#             return JsonResponse({'error': 'account_number and ifsc are required for verification'}, status=400)
+
+#         task_id, result = verify_bank_account_sync(account_number, ifsc)
+#         idfy_bank_status = result.get("status", "")
+#         source_output = result.get("result", {}).get("source_output", {})
+#         verified = source_output.get("verified", False)
+#         bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
+
+#         # bank_status = 1 if idfy_bank_status == "completed" and verified else 2 if not verified else 0
+#         bank_status = 1 if idfy_bank_status == "completed" else 0
+#         KYCDetails.objects.update_or_create(
+#             customer=customer,
+#             defaults={
+#                 "banck_account_number": account_number,
+#                 "ifsc_code": ifsc,
+#                 "bank_name": bank_name,
+#                 "bank_task_id": task_id,
+#                 "idfy_bank_status": idfy_bank_status,
+#                 "bank_status": bank_status
+#             }
+#         )
+
+#         return JsonResponse({
+#             "action": "verify",
+#             "message": "Bank verification completed.",
+#             "verified": verified,
+#             "bank_status": bank_status,
+#             "idfy_bank_status": idfy_bank_status,
+#             "task_id": task_id,
+#             "raw_response": result
+#         }, status=200)
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
 @customer_login_required
 @csrf_exempt
 def bank_account_verification_view(request):
@@ -1461,69 +1530,102 @@ def bank_account_verification_view(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = data.session.get('customer_id')
+        customer_id = request.session.get('customer_id')
         if not customer_id:
             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
         account_number = data.get("account_number")
         ifsc = data.get("ifsc")
 
-        session_customer_id = request.session.get('customer_id')
-        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-        if not customer_id:
-            return JsonResponse({'error': 'customer_id is required'}, status=400)
+        if not account_number or not ifsc:
+            return JsonResponse({'error': 'account_number and ifsc are required'}, status=400)
 
         customer = get_object_or_404(CustomerRegister, id=customer_id)
         kyc = KYCDetails.objects.filter(customer=customer).first()
 
-        # Action: view_only
+        # If already verified, return early
         if kyc and kyc.bank_status == 1:
             return JsonResponse({
                 "action": "view_only",
-                "message": "Bank account already verified.Please proceed for next.",
+                "message": "Bank account already verified. Please proceed to the next step.",
                 "bank_status": kyc.bank_status,
                 "idfy_bank_status": kyc.idfy_bank_status
             }, status=200)
 
-        #Action: verify
-        if not account_number or not ifsc:
-            return JsonResponse({'error': 'account_number and ifsc are required for verification'}, status=400)
-
+        # Call sync function and parse
         task_id, result = verify_bank_account_sync(account_number, ifsc)
         idfy_bank_status = result.get("status", "")
-        source_output = result.get("result", {}).get("source_output", {})
-        verified = source_output.get("verified", False)
-        bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
+        result_data = result.get("result", {})
 
-        # bank_status = 1 if idfy_bank_status == "completed" and verified else 2 if not verified else 0
-        bank_status = 1 if idfy_bank_status == "completed" else 0
+        # Extract holder name properly
+        bank_holder_name = (
+            result_data.get("name_at_bank") or
+            result_data.get("account_holder_name") or
+            result_data.get("customer_name") or
+            ""
+        ).strip()
+
+        # Use "id_found" as verified check (as per your response)
+        verified = result_data.get("status", "") == "id_found"
+        bank_name = result_data.get("bank_name", "") or bank_holder_name
+        pan_name = kyc.pan_name.strip() if kyc and kyc.pan_name else ""
+
+        # If name missing in response
+        if not bank_holder_name:
+            return JsonResponse({
+                "action": "manual_review",
+                "message": "Bank holder name not found. Cannot perform name match.",
+                "bank_holder_name": "",
+                "pan_name": pan_name,
+                "verified": verified,
+                "idfy_bank_status": idfy_bank_status,
+                "raw_response": result
+            }, status=400)
+
+        # Compare PAN and Bank Holder Name (case-insensitive)
+        is_name_matched = pan_name.lower() == bank_holder_name.lower()
+
+        if not is_name_matched:
+            return JsonResponse({
+                "action": "manual_review",
+                "message": "Name mismatch between PAN and bank account holder.",
+                "bank_holder_name": bank_holder_name,
+                "pan_name": pan_name,
+                "verified": verified,
+                "idfy_bank_status": idfy_bank_status,
+                "raw_response": result
+            }, status=400)
+
+        # Save only if matched
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
-                "banck_account_number": account_number,
+                "bank_account_number": account_number,
                 "ifsc_code": ifsc,
                 "bank_name": bank_name,
                 "bank_task_id": task_id,
                 "idfy_bank_status": idfy_bank_status,
-                "bank_status": bank_status
+                "bank_status": 1 if idfy_bank_status == "completed" else 0,
+                "bank_holder_name": bank_holder_name,
+                "bank_pan_name_match": True
             }
         )
 
         return JsonResponse({
             "action": "verify",
-            "message": "Bank verification completed.",
+            "message": "Bank verification successful. Details saved.",
             "verified": verified,
-            "bank_status": bank_status,
+            "bank_status": 1 if idfy_bank_status == "completed" else 0,
             "idfy_bank_status": idfy_bank_status,
             "task_id": task_id,
+            "bank_holder_name": bank_holder_name,
+            "pan_name": pan_name,
+            "name_matched": True,
             "raw_response": result
         }, status=200)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-    
-
 @customer_login_required
 @csrf_exempt
 def upload_pdf_document(request):
@@ -2008,11 +2110,9 @@ def create_drone_order(request):
         data = json.loads(request.body)
         customer_id = request.session.get('customer_id')
         email = data.get('email')
-        quantity = int(data.get('quantity', 1))  # default 1 drone
+        quantity = int(data.get('quantity', 1))
 
-        if not customer_id:
-            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-        if not all([email, quantity]):
+        if not email or not quantity:
             return JsonResponse({'error': 'Missing required fields'}, status=400)
 
         customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
@@ -2030,15 +2130,11 @@ def create_drone_order(request):
 
         remaining = total_required - total_paid
         if remaining <= 0:
-            return JsonResponse({'error': f'Full payment of ₹{total_required} already completed.'}, status=400)
-
-        # Split into chunks of MAX_RAZORPAY_LIMIT
-        parts = []
-        part_num = PaymentDetails.objects.filter(customer=customer).aggregate(
-            last=Max('part_number'))['last'] or 0
+            return JsonResponse({'message': f'Full payment of ₹{total_required} already completed.'})
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
+        # Calculate number of chunks needed
         split_amounts = []
         temp_remaining = remaining
         while temp_remaining > 0:
@@ -2046,41 +2142,68 @@ def create_drone_order(request):
             split_amounts.append(part_amount)
             temp_remaining -= part_amount
 
-        for amount in split_amounts:
-            part_num += 1
-            amount_paise = int(amount * 100)
-            order = client.order.create({
-                'amount': amount_paise,
-                'currency': 'INR',
-                'payment_capture': 1,
-                'notes': {
-                    'customer_id': str(customer_id),
-                    'email': email,
-                    'quantity': str(quantity),
-                    'part_number': str(part_num)
-                }
-            })
+        # Check existing "created" orders
+        existing_parts = PaymentDetails.objects.filter(
+            customer=customer,
+            drone_payment_status='created',
+            quantity=quantity  # to ensure match
+        ).order_by('part_number')
 
-            PaymentDetails.objects.create(
-                customer=customer,
-                razorpay_order_id=order['id'],
-                amount=amount,
-                part_number=part_num,
-                drone_payment_status='created',
-                quantity=quantity
-            )
+        # Reuse if already created
+        parts = []
+        if existing_parts.count() == len(split_amounts):
+            for payment in existing_parts:
+                parts.append({
+                    'order_id': payment.razorpay_order_id,
+                    'razorpay_key': settings.RAZORPAY_KEY_ID,
+                    'amount': float(payment.amount),
+                    'currency': 'INR',
+                    'part_number': payment.part_number
+                })
+        else:
+            # Create fresh orders
+            PaymentDetails.objects.filter(customer=customer, drone_payment_status='created').delete()
+            part_num = PaymentDetails.objects.filter(customer=customer).aggregate(
+                last=Max('part_number'))['last'] or 0
 
-            parts.append({
-                'order_id': order['id'],
-                'razorpay_key': settings.RAZORPAY_KEY_ID,
-                'amount': amount,
-                'currency': 'INR',
-                'part_number': part_num
-            })
+            for amount in split_amounts:
+                part_num += 1
+                amount_paise = int(amount * 100)
+                order = client.order.create({
+                    'amount': amount_paise,
+                    'currency': 'INR',
+                    'payment_capture': 1,
+                    'notes': {
+                        'customer_id': str(customer_id),
+                        'email': email,
+                        'quantity': str(quantity),
+                        'part_number': str(part_num)
+                    }
+                })
+
+                PaymentDetails.objects.create(
+                    customer=customer,
+                    razorpay_order_id=order['id'],
+                    amount=amount,
+                    part_number=part_num,
+                    drone_payment_status='created',
+                    quantity=quantity
+                )
+
+                parts.append({
+                    'order_id': order['id'],
+                    'razorpay_key': settings.RAZORPAY_KEY_ID,
+                    'amount': amount,
+                    'currency': 'INR',
+                    'part_number': part_num
+                })
 
         return JsonResponse({
-            'message': f'{len(parts)} Razorpay orders created to complete ₹{remaining} payment.',
-            'orders': parts
+            'message': f'{len(parts)} Razorpay orders returned to complete ₹{remaining} payment.',
+            'orders': parts,
+            'total_required': total_required,
+            'total_paid': total_paid,
+            'remaining': total_required - total_paid
         })
 
     except Exception as e:

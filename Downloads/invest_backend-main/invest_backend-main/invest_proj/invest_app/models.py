@@ -89,7 +89,7 @@ class KYCDetails(models.Model):
     aadhar_task_id = models.CharField(max_length=100, blank=True, null=True)
     idfy_aadhar_status = models.CharField(max_length=10, null=True, blank=True)
     aadhar_path = models.CharField(max_length=250, null=True, blank=True)  # Path to the Aadhar document
-
+    aadhar_gender= models.CharField(max_length=10, null=True, blank=True)  #
     bank_account_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
     bank_name = models.CharField(max_length=50, null=True, blank=True)
     ifsc_code = models.CharField(max_length=11, null=True, blank=True)
@@ -156,6 +156,7 @@ class PaymentDetails(models.Model):
     payment_mode = models.CharField(max_length=40,default='card')
     part_number = models.IntegerField(default=1)  # 1, 2, or 3
     amount = models.DecimalField(max_digits=10, decimal_places=2)
+    quantity= models.IntegerField(default=1) 
     drone_payment_status = models.CharField(max_length=20, default='created')  # created, paid, failed
     created_at = models.DateTimeField(auto_now_add=True)
     payment_status= models.IntegerField(default=0)

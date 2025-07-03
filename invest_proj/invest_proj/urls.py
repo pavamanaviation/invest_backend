@@ -28,7 +28,7 @@ upload_pdf_document,verify_and_save_nominee,create_drone_order,razorpay_callback
 initiate_nominee_registration,preview_customer_details,verify_and_update_nominee
 )
 
-from invest_app.role_views import (get_model_names_by_role,get_model_data_by_role_and_model)
+from invest_app.role_views import (get_all_models_by_role,get_models_data_by_role)
 urlpatterns = [
     #admin urls
     path('admin/', admin.site.urls),
@@ -82,8 +82,8 @@ urlpatterns = [
     path('payment-status-check', payment_status_check, name='payment_status_check'),
 
     #role urls
-    path('get-models-names',get_model_names_by_role,name='get_model_names_by_role'),
-    path('get-details',get_model_data_by_role_and_model,name='get_model_data_by_role_and_model')
+    path('get-models-names',get_all_models_by_role,name='get_all_models_by_role'),
+    path('get-details',get_models_data_by_role,name='get_models_data_by_role')
 
     
 ]

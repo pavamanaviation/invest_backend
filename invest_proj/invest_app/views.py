@@ -654,7 +654,7 @@ def format_kyc_data(kyc):
         "aadhar_status": kyc.aadhar_status,
         "aadhar_path_db": kyc.aadhar_path,
         # "aadhar_path": aadhar_url,
-         "aadhar_path": f"/api/view-kyc-doc/?customer_id={kyc.customer.id}&type=aadhar" if kyc.aadhar_path else "",
+        "aadhar_path": f"/api/view-kyc-doc/?customer_id={kyc.customer.id}&type=aadhar" if kyc.aadhar_path else "",
         "bank_account_number": kyc.banck_account_number,
         "ifsc_code": kyc.ifsc_code,
         "bank_status": kyc.bank_status,

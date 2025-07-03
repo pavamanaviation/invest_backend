@@ -488,7 +488,7 @@ SESSION_COOKIE_DOMAIN = None
 
 # Allow cookie to be shared across ports/domains
 SESSION_COOKIE_SAMESITE = "Lax"
-SESSION_COOKIE_SECURE = False  # ✅ Only True if you're using HTTPS
+# SESSION_COOKIE_SECURE = False  # ✅ Only True if you're using HTTPS
 SESSION_COOKIE_DOMAIN = None   # Let Django set it dynamically
 
 MSG91_AUTH_KEY = config('MSG91_AUTH_KEY')
@@ -498,4 +498,11 @@ MSG91_COUNTRY = config('MSG91_COUNTRY', default='91')
 MSG91_SMS_URL = config('MSG91_SMS_URL')
 MSG91_FLOW_ID_RESETPASSWORD = config('MSG91_FLOW_ID_RESETPASSWORD')
 MSG91_FLOW_ID_MOILE_VERIFY = config('MSG91_FLOW_ID_MOILE_VERIFY')
+
+# Session will expire after 1 hour (3600 seconds)
+SESSION_COOKIE_AGE = 3600  # 1 hour in seconds
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_COOKIE_SECURE = False      # Only send session cookies over HTTPS
+SESSION_COOKIE_HTTPONLY = True    # Prevent JavaScript access to the session cookie
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True  # Optional: logout on browser close
 

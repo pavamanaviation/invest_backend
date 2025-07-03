@@ -90,10 +90,10 @@ class KYCDetails(models.Model):
     idfy_aadhar_status = models.CharField(max_length=10, null=True, blank=True)
     aadhar_path = models.CharField(max_length=250, null=True, blank=True)  # Path to the Aadhar document
 
-    banck_account_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
-    banck_name = models.CharField(max_length=50, null=True, blank=True)
+    bank_account_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
+    bank_name = models.CharField(max_length=50, null=True, blank=True)
     ifsc_code = models.CharField(max_length=11, null=True, blank=True)
-    banck_task_id = models.CharField(max_length=100, null=True, blank=True)
+    bank_task_id = models.CharField(max_length=100, null=True, blank=True)
     idfy_bank_status = models.CharField(max_length=10, null=True, blank=True)
     bank_status = models.IntegerField(default=0)  # 0 = Pending, 1 = Approved, 2 = Rejected
     

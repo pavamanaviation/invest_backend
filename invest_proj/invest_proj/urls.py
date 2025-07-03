@@ -21,7 +21,7 @@ from invest_app.views import (add_role, view_kyc_doc,view_roles,delete_role,upda
 verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details,)
 
 # from invest_app.views import check_indian_time 
-from invest_app.customer_views import (customer_register, get_pan_verification_status, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
+from invest_app.customer_views import (customer_register, get_pan_verification_status, match_selfie_with_s3_document, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
 customer_login,verify_pan_document,get_pan_source_verification_status,get_aadhar_verification_status,
 bank_account_verification_view,customer_more_details,customer_profile_view,
 upload_pdf_document,verify_and_save_nominee,create_drone_order,razorpay_callback,payment_status_check,
@@ -53,10 +53,12 @@ urlpatterns = [
     path('customer-login', customer_login, name='customer_login'),
     path('verify-pan', verify_pan_document,name='verify_pan_document'),
     path('get-pan-source-verification-status', get_pan_source_verification_status, name='get_pan_source_verification_status'),
-    path('get_pan_verification_status', get_pan_verification_status, name='get_pan_verification_status'),
+    path('get-pan-verification-status', get_pan_verification_status, name='get_pan_verification_status'),
     
-    path('verify_aadhar_document', verify_aadhar_document,name='verify_aadhar_document'),
+    path('verify-aadhar-document', verify_aadhar_document,name='verify_aadhar_document'),
     path('get-aadhar-verification-status', get_aadhar_verification_status, name='get_aadhar_verification_status'),
+    # path('matchselfie_with_s3_document',match_selfie_with_s3_document, name='match_selfie_with_s3_document'),
+    
     # path('verify-pan', pan_verification_request_view, name='verify_pan'),
     # path('verify-pan-result', pan_verification_result_view, name='verify_pan_result'),
     # path('verify-pandoc', pan_ocr_upload_view, name='pan_ocr_upload_view'),

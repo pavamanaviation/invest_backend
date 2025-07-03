@@ -4,6 +4,120 @@ from invest_app.models import (CustomerRegister,Role,CustomerMoreDetails,
                                KYCDetails,Permission)
 from invest_app.views import MODEL_LABELS
 
+
+@csrf_exempt
+def get_all_models_by_role(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        role_id = data.get('role_id')
+
+        if not role_id:
+            return JsonResponse({'error': 'role_id is required'}, status=400)
+
+        # Validate and get the active role
+        try:
+            role = Role.objects.get(id=role_id, status=1)
+        except Role.DoesNotExist:
+            return JsonResponse({'error': 'Role not found or inactive'}, status=404)
+
+
+        return JsonResponse({
+            "role_id": role_id,
+            "role_name":role.first_name+" "+role.last_name,
+            "role_type": role.role_type,
+            "role_company": role.company_name,
+            "model_names": MODEL_LABELS
+        }, status=200)
+
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON format'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+def get_models_data_by_role(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        role_id = data.get('role_id')
+        model_name = data.get('model_name')
+
+        if not role_id or not model_name:
+            return JsonResponse({'error': 'role_id and model_name are required'}, status=400)
+
+        try:
+            role = Role.objects.get(id=role_id, status=1)
+        except Role.DoesNotExist:
+            return JsonResponse({'error': 'Role not found'}, status=404)
+
+        if model_name not in MODEL_LABELS:
+            return JsonResponse({'error': f'Model "{model_name}" not recognized.'}, status=400)
+
+        if model_name == 'KYCDetails':
+            if role.role_type in ['Marketing Executive', 'Financial Executive'] and role.company_name == 'Pavaman Aviation':
+                queryset = KYCDetails.objects.select_related('customer').all()
+                data = []
+
+                for obj in queryset:
+                    record = {
+                        "customer_name": f"{obj.customer.first_name} {obj.customer.last_name}",
+                        "pan_name": "",
+                        "pan_number": "",
+                        "pan_status": obj.pan_status,
+                        "pan_verify_status": "",
+                        "aadhar_number": "",
+                        "aadhar_status": obj.aadhar_status,
+                        "aadhar_verify_status": "",
+                        "bank_account_number": "",
+                        "bank_ifsc_code": "",
+                        "bank_name": ""
+                    }
+
+                    # PAN details
+                    if obj.pan_status == 1 and obj.idfy_pan_status == "completed":
+                        record["pan_name"] = obj.pan_name or ""
+                        record["pan_number"] = obj.pan_number or ""
+                        record["pan_verify_status"] = obj.idfy_pan_status or ""
+
+                    # Aadhar details
+                    if obj.aadhar_status == 1 and obj.idfy_aadhar_status == "completed":
+                        record["aadhar_number"] = obj.aadhar_number or ""
+                        record["aadhar_verify_status"] = obj.idfy_aadhar_status or ""
+
+                    # Bank details (only for Financial Executive)
+                    if role.role_type == "Financial Executive":
+                        if obj.bank_status == 1 and obj.idfy_bank_status == "completed":
+                            record["bank_account_number"] = obj.bank_account_number or ""
+                            record["bank_ifsc_code"] = obj.ifsc_code or ""
+                            record["bank_name"] = obj.bank_name or ""
+
+                    data.append(record)
+
+                return JsonResponse({
+                    'model': model_name,
+                    'label': MODEL_LABELS[model_name],
+                    'data': data
+                }, status=200)
+            else:
+                return JsonResponse({
+                    'error': 'Permission denied: Role type or company not allowed to view this data.'
+                }, status=403)
+        else:
+            return JsonResponse({'error': 'This model is not handled yet.'}, status=400)
+
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON format'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+#keep it for backup
+"""
 @csrf_exempt
 def get_model_names_by_role(request):
     if request.method != 'POST':
@@ -33,6 +147,7 @@ def get_model_names_by_role(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
     
+#keep it for backup    
 @csrf_exempt
 def get_model_data_by_role_and_model(request):
     if request.method != 'POST':
@@ -79,6 +194,8 @@ def get_model_data_by_role_and_model(request):
         return JsonResponse({'error': 'Invalid JSON format'}, status=400)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+    
+
 
 # @csrf_exempt
 # def get_model_data_by_role(request):
@@ -126,3 +243,4 @@ def get_model_data_by_role_and_model(request):
 #         return JsonResponse({'error': 'Invalid JSON format'}, status=400)
 #     except Exception as e:
 #         return JsonResponse({'error': str(e)}, status=500)
+"""

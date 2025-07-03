@@ -140,7 +140,6 @@ def customer_register(request):
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 
-
 @csrf_exempt
 def verify_customer_otp(request):
     if request.method != 'POST':
@@ -1507,7 +1506,7 @@ def bank_account_verification_view(request):
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
-                "banck_account_number": account_number,
+                "bank_account_number": account_number,
                 "ifsc_code": ifsc,
                 "bank_name": bank_name,
                 "bank_task_id": task_id,
@@ -1638,6 +1637,98 @@ def upload_pdf_document(request):
             })
         except Exception as e:
             return JsonResponse({"error": str(e)}, status=500)
+
+import boto3
+import cv2
+import numpy as np
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
+from insightface.app import FaceAnalysis
+from io import BytesIO
+
+# Initialize InsightFace (CPU only)
+app = FaceAnalysis(name='buffalo_l')
+app.prepare(ctx_id=-1)  # Use CPU only
+
+def read_image_from_s3(bucket_name, key):
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_S3_REGION_NAME
+    )
+    obj = s3.get_object(Bucket=bucket_name, Key=key)
+    content = obj['Body'].read()
+    np_array = np.frombuffer(content, np.uint8)
+    return cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+@csrf_exempt
+def match_selfie_with_s3_document(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    selfie = request.FILES.get('selfie')
+    if not selfie:
+        return JsonResponse({'error': 'Selfie is required'}, status=400)
+
+    try:
+        # Step 1: Load selfie image
+        selfie_bytes = selfie.read()
+        selfie_array = np.frombuffer(selfie_bytes, np.uint8)
+        selfie_img = cv2.imdecode(selfie_array, cv2.IMREAD_COLOR)
+        selfie_faces = app.get(selfie_img)
+
+        if not selfie_faces:
+            return JsonResponse({'match': False, 'message': '❌ No face found in selfie'})
+
+        selfie_embedding = selfie_faces[0].embedding
+        bucket = "pavamaninvestdoc"
+        document_paths = {
+            "pan": "customerdoc/pan.jpeg",
+            "aadhar": "customerdoc/aadhar.jpeg"
+        }
+
+        failed_scores = {}  # ✅ Initialize here
+
+        for doc_type, s3_key in document_paths.items():
+            try:
+                doc_img = read_image_from_s3(bucket, s3_key)
+                doc_faces = app.get(doc_img)
+                if not doc_faces:
+                    continue
+                doc_embedding = doc_faces[0].embedding
+
+                # Normalize embeddings
+                embedding1 = selfie_embedding / np.linalg.norm(selfie_embedding)
+                embedding2 = doc_embedding / np.linalg.norm(doc_embedding)
+
+                # Cosine similarity
+                score = np.dot(embedding1, embedding2)
+                print(f"[DEBUG] Similarity with {doc_type.upper()}: {score:.4f}")
+                failed_scores[doc_type] = round(float(score), 4)
+
+                if score >= 0.80:  # Match threshold
+                    return JsonResponse({
+                        'match': True,
+                        'matched_with': doc_type,
+                        'similarity_score': float(score),
+                        'similarity_scores': failed_scores,
+                        'message': f'✅ Face matched with {doc_type.upper()}'
+                    })
+            except Exception as e:
+                print(f"[ERROR] {doc_type.upper()} doc error:", e)
+                continue
+
+        return JsonResponse({
+            'match': False,
+            'similarity_scores': failed_scores,
+            'message': '❌ Face did not match with PAN or Aadhaar'
+        })
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
 # -------------------------------------------------------
 def upload_file_to_s3(file_obj, file_key):
     s3 = boto3.client('s3',
@@ -1894,8 +1985,8 @@ def preview_customer_details(request):
             return JsonResponse({"error": "Unauthorized: Session customer ID mismatch."}, status=403)
 
         customer = CustomerRegister.objects.only("id", "email", "mobile_no").filter(id=session_customer_id).first()
-        kyc = KYCDetails.objects.only("id", "pan_number","pan_name","pan_dob", "aadhar_number", "banck_account_number",
-        "ifsc_code", "banck_name","aadhar_path", "pan_path").filter(customer_id=session_customer_id,status=1).first()
+        kyc = KYCDetails.objects.only("id", "pan_number","pan_name","pan_dob", "aadhar_number", "bank_account_number",
+        "ifsc_code", "bank_name","aadhar_path", "pan_path").filter(customer_id=session_customer_id,status=1).first()
         more = CustomerMoreDetails.objects.only(
             "address", "city", "state", "country", "pincode", "mandal",
             "district","gender", "profession", "designation", "personal_status",
@@ -1927,9 +2018,9 @@ def preview_customer_details(request):
                 "pan_name": kyc.pan_name,
                 "pan_dob": str(kyc.pan_dob),
                 "aadhar_number": kyc.aadhar_number,
-                "banck_account_number": kyc.banck_account_number,
+                "bank_account_number": kyc.bank_account_number,
                 "ifsc_code": kyc.ifsc_code,
-                "banck_name": kyc.banck_name,
+                "bank_name": kyc.bank_name,
                 "pan_doc_url": get_s3_url(kyc.pan_path),
                 "aadhar_doc_url": get_s3_url(kyc.aadhar_path),
             },

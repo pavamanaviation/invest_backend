@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name='kycdetails',
-            name='banck_task_id',
+            name='bank_task_id',
             field=models.CharField(blank=True, max_length=100, null=True),
         ),
         migrations.AddField(

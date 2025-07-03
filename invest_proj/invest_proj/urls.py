@@ -64,7 +64,7 @@ urlpatterns = [
     # path('verify-pandoc', pan_ocr_upload_view, name='pan_ocr_upload_view'),
 
     # path('verify-aadhar-lite', aadhar_lite_verification_view,name='aadhar_lite_verification'),
-    path('verify-banck-account', bank_account_verification_view, name='bank_account_verification'),
+    path('verify-bank-account', bank_account_verification_view, name='bank_account_verification'),
     path('customer-more-details', customer_more_details, name='customer_more_details'),
     path('customer-profile', customer_profile_view, name='customer_profile'),
     path('upload-pdf-document', upload_pdf_document, name='upload_pdf_document'),

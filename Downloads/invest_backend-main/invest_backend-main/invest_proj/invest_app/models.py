@@ -156,7 +156,8 @@ class PaymentDetails(models.Model):
     payment_mode = models.CharField(max_length=40,default='card')
     part_number = models.IntegerField(default=1)  # 1, 2, or 3
     amount = models.DecimalField(max_digits=10, decimal_places=2)
-    quantity= models.IntegerField(default=1) 
+    quantity= models.IntegerField(default=1)
+    drone_order_id = models.CharField(max_length=50, null=True, blank=True) 
     drone_payment_status = models.CharField(max_length=20, default='created')  # created, paid, failed
     created_at = models.DateTimeField(auto_now_add=True)
     payment_status= models.IntegerField(default=0)

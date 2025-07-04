@@ -1,3 +1,4 @@
+import string
 from invest_app.utils.shared_imports import *
 from invest_app.utils.sessions import customer_login_required 
 from .models import Admin, CustomerRegister,PaymentDetails, KYCDetails, CustomerMoreDetails, NomineeDetails, Role
@@ -1948,7 +1949,7 @@ def preview_customer_details(request):
             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
        
         customer = CustomerRegister.objects.only("id", "email", "mobile_no").filter(id=customer_id).first()
-        kyc = KYCDetails.objects.only("id", "pan_number","pan_name","pan_dob", "aadhar_number", "banck_account_number",
+        kyc = KYCDetails.objects.only("id", "pan_number","pan_name","pan_dob", "aadhar_number","aadhar_dob", "banck_account_number",
         "ifsc_code", "banck_name","aadhar_path", "pan_path").filter(customer_id=customer_id,status=1).first()
         more = CustomerMoreDetails.objects.only(
             "address", "city", "state", "country", "pincode", "mandal",
@@ -1981,6 +1982,7 @@ def preview_customer_details(request):
                 "pan_name": kyc.pan_name,
                 "pan_dob": str(kyc.pan_dob),
                 "aadhar_number": kyc.aadhar_number,
+                "aadhar_gender":kyc.aadhar_gender,
                 "banck_account_number": kyc.banck_account_number,
                 "ifsc_code": kyc.ifsc_code,
                 "banck_name": kyc.banck_name,
@@ -2017,6 +2019,62 @@ def preview_customer_details(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+    
+@customer_login_required
+@csrf_exempt
+def completed_status(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
+
+    try:
+        customer_id = request.session.get('customer_id')
+
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
+        customer = CustomerRegister.objects.filter(id=customer_id,status=1).first()
+        if not customer:
+            return JsonResponse({'error': 'Customer not found'}, status=404)
+
+        kyc = KYCDetails.objects.filter(customer=customer,status=1).first()
+        if kyc:
+            pan_complete = kyc.pan_status == 1
+            aadhar_complete = kyc.aadhar_status == 1
+        else:
+            pan_complete = aadhar_complete = False
+
+        more = CustomerMoreDetails.objects.filter(customer=customer,status=1).first()
+        if more:
+            personal_complete = more.personal_status == 1
+            selfie_complete = more.selfie_status == 1
+            signature_complete = more.signature_status == 1
+        else:
+            personal_complete = selfie_complete = signature_complete = False
+
+        kyc_completed = (
+            pan_complete and
+            aadhar_complete and
+            personal_complete and
+            selfie_complete and
+            signature_complete
+        )
+
+        # nominee_complete = NomineeDetails.objects.filter(customer=customer, status=1).exists()
+
+        if kyc_completed:
+            return JsonResponse({'message': 'All KYC details are completed.'}, status=200)
+        else:
+            return JsonResponse({
+                'message': 'KYC details are incomplete.',
+                'pan_status': pan_complete,
+                'aadhar_status': aadhar_complete,
+                'personal_status': personal_complete,
+                'selfie_status': selfie_complete,
+                'signature_status': signature_complete,
+            }, status=200)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
     
 # @customer_login_required
 # @csrf_exempt
@@ -2098,7 +2156,6 @@ def preview_customer_details(request):
 
 #     except Exception as e:
 #         return JsonResponse({'error': str(e)}, status=500)
-MAX_RAZORPAY_LIMIT = 500000  # ₹5,00,000
 
 @customer_login_required
 @csrf_exempt
@@ -2110,100 +2167,104 @@ def create_drone_order(request):
         data = json.loads(request.body)
         customer_id = request.session.get('customer_id')
         email = data.get('email')
-        quantity = int(data.get('quantity', 1))
-
-        if not email or not quantity:
+        quantity = int(data.get('quantity') or 1)
+        current_payment = float(data.get('price'))  # Total user wants to pay
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+        
+        if not all([email, current_payment, quantity]):
             return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+        if quantity > 10:
+            return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
 
         customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
         if not customer:
             return JsonResponse({'error': 'Customer not found'}, status=404)
 
-        price_per_drone = 1200000
-        total_required = price_per_drone * quantity
+        unit_price = 1200000
+        total_required = unit_price * quantity
 
         # Total paid so far
         total_paid = PaymentDetails.objects.filter(
             customer=customer,
             drone_payment_status='paid'
-        ).aggregate(total=Sum('amount'))['total'] or 0
+        ).aggregate(total_paid=Sum('amount'))['total_paid'] or 0
 
         remaining = total_required - total_paid
         if remaining <= 0:
-            return JsonResponse({'message': f'Full payment of ₹{total_required} already completed.'})
+            return JsonResponse({'error': f'Full payment of ₹{total_required:,} already completed.'}, status=400)
+
+        if current_payment > remaining:
+            return JsonResponse({
+                'error': f'Maximum remaining amount is ₹{remaining:,}. Please enter valid amount.'
+            }, status=400)
+
+        # Razorpay per-order limit (₹5,00,000)
+        MAX_RZP_ORDER_LIMIT = 500000
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+        orders = []
+        drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+        admin=Admin.objects.filter(id=1).first()
+        if not admin:
+            return JsonResponse({'error': 'Admin not found'}, status=500)
+        # Get last part number
+        last_part = PaymentDetails.objects.filter(customer=customer).aggregate(
+            last_part=Max('part_number')
+        )['last_part'] or 0
+        next_part = last_part + 1
 
-        # Calculate number of chunks needed
-        split_amounts = []
-        temp_remaining = remaining
-        while temp_remaining > 0:
-            part_amount = min(temp_remaining, MAX_RAZORPAY_LIMIT)
-            split_amounts.append(part_amount)
-            temp_remaining -= part_amount
+        # Split into multiple orders
+        amount_remaining = current_payment
+        while amount_remaining > 0:
+            split_amount = min(amount_remaining, MAX_RZP_ORDER_LIMIT)
+            amount_paise = int(split_amount * 100)
 
-        # Check existing "created" orders
-        existing_parts = PaymentDetails.objects.filter(
-            customer=customer,
-            drone_payment_status='created',
-            quantity=quantity  # to ensure match
-        ).order_by('part_number')
+            order = client.order.create({
+                'amount': amount_paise,
+                'currency': 'INR',
+                'payment_capture': 1,
+                'notes': {
+                    'customer_id': str(customer_id),
+                    'email': email,
+                    'drone_order_id': drone_order_id,
+                    'part': str(next_part),
+                    'quantity': str(quantity),
+                    'unit_price': str(unit_price),
+                }
+            })
 
-        # Reuse if already created
-        parts = []
-        if existing_parts.count() == len(split_amounts):
-            for payment in existing_parts:
-                parts.append({
-                    'order_id': payment.razorpay_order_id,
-                    'razorpay_key': settings.RAZORPAY_KEY_ID,
-                    'amount': float(payment.amount),
-                    'currency': 'INR',
-                    'part_number': payment.part_number
-                })
-        else:
-            # Create fresh orders
-            PaymentDetails.objects.filter(customer=customer, drone_payment_status='created').delete()
-            part_num = PaymentDetails.objects.filter(customer=customer).aggregate(
-                last=Max('part_number'))['last'] or 0
+            PaymentDetails.objects.create(
+                customer=customer,
+                razorpay_order_id=order['id'],
+                amount=split_amount,
+                part_number=next_part,
+                drone_payment_status='created',
+                quantity=quantity,
+                drone_order_id=drone_order_id,
+                admin=admin
+            )
 
-            for amount in split_amounts:
-                part_num += 1
-                amount_paise = int(amount * 100)
-                order = client.order.create({
-                    'amount': amount_paise,
-                    'currency': 'INR',
-                    'payment_capture': 1,
-                    'notes': {
-                        'customer_id': str(customer_id),
-                        'email': email,
-                        'quantity': str(quantity),
-                        'part_number': str(part_num)
-                    }
-                })
+            orders.append({
+                'order_id': order['id'],
+                'razorpay_key': settings.RAZORPAY_KEY_ID,
+                'amount': split_amount,
+                'currency': 'INR',
+                'email': email,
+                'part_number': next_part,
+                'quantity': quantity,
+                
+            })
 
-                PaymentDetails.objects.create(
-                    customer=customer,
-                    razorpay_order_id=order['id'],
-                    amount=amount,
-                    part_number=part_num,
-                    drone_payment_status='created',
-                    quantity=quantity
-                )
-
-                parts.append({
-                    'order_id': order['id'],
-                    'razorpay_key': settings.RAZORPAY_KEY_ID,
-                    'amount': amount,
-                    'currency': 'INR',
-                    'part_number': part_num
-                })
+            amount_remaining -= split_amount
+            next_part += 1
 
         return JsonResponse({
-            'message': f'{len(parts)} Razorpay orders returned to complete ₹{remaining} payment.',
-            'orders': parts,
-            'total_required': total_required,
-            'total_paid': total_paid,
-            'remaining': total_required - total_paid
+            'message': f'{len(orders)} order(s) created.',
+            'drone_order_id': drone_order_id,
+            'customer_id': customer_id,
+            'orders': orders
         })
 
     except Exception as e:
@@ -2212,6 +2273,8 @@ def create_drone_order(request):
 @csrf_exempt
 def razorpay_callback(request):
     try:
+        print("🔍 Full Payment Payload:", json.loads(request.body))
+
         payload = request.body
         signature = request.headers.get('X-Razorpay-Signature')
 
@@ -2248,17 +2311,40 @@ def razorpay_callback(request):
                 print(f"Payment part {payment.part_number} marked as PAID.")
 
                 all_paid = PaymentDetails.objects.filter(
-                    customer=payment.customer, drone_payment_status='paid'
+                    customer=payment.customer,drone_order_id=payment.drone_order_id,
+                    drone_payment_status='paid'
                 ).count()
+                total_parts = PaymentDetails.objects.filter(
+                    customer=payment.customer,
+                    drone_order_id=payment.drone_order_id
+                ).count()
+                if all_paid == total_parts:
+                    print(f"🎉 All {total_parts} payment parts completed for {payment.drone_order_id}.")
 
-                if all_paid == 3:
-                    print("Full ₹12L drone payment completed.")
+                    PaymentDetails.objects.filter(
+                        drone_order_id=payment.drone_order_id,
+                        customer=payment.customer
+                    ).update(payment_status=1)
 
+                    # Dynamic payment completion check
+                    unit_price = 1200000
+                    quantity = payment.quantity
+                    expected_total = unit_price * quantity
+
+                    total_amount_paid = PaymentDetails.objects.filter(
+                        drone_order_id=payment.drone_order_id,
+                        customer=payment.customer,
+                        drone_payment_status='paid'
+                    ).aggregate(total=Sum('amount'))['total'] or 0
+
+                    if total_amount_paid >= expected_total:
+                        print(f"Full payment of ₹{expected_total:,} completed for {quantity} drone(s).")
         return HttpResponse(status=200)
 
     except Exception as e:
         print("Webhook error:", str(e))
         return JsonResponse({'error': str(e)}, status=500)
+    
 @customer_login_required
 @csrf_exempt
 def create_drone_installment_order(request):
@@ -2270,7 +2356,8 @@ def create_drone_installment_order(request):
         customer_id = request.session.get('customer_id')
         email = data.get('email')
         quantity = int(data.get('quantity', 1))
-
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
         if not email or not quantity:
             return JsonResponse({'error': 'Missing fields'}, status=400)
 

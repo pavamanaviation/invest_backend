@@ -1283,7 +1283,7 @@ def aadhar_lite_verification_view(request):
 #         KYCDetails.objects.update_or_create(
 #             customer=customer,
 #             defaults={
-#                 "bank_account_number": account_number,
+#                 "banck_account_number": account_number,
 #                 "ifsc_code": ifsc,
 #                 "bank_name": bank_name,
 #                 "bank_task_id": task_id,
@@ -1347,7 +1347,7 @@ def bank_account_verification_view(request):
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
-                "bank_account_number": account_number,
+                "banck_account_number": account_number,
                 "ifsc_code": ifsc,
                 "bank_name": bank_name,
                 "bank_task_id": task_id,

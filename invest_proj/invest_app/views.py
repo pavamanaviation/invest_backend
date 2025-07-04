@@ -655,7 +655,7 @@ def format_kyc_data(kyc):
         "aadhar_path_db": kyc.aadhar_path,
         # "aadhar_path": aadhar_url,
         "aadhar_path": f"/api/view-kyc-doc/?customer_id={kyc.customer.id}&type=aadhar" if kyc.aadhar_path else "",
-        "bank_account_number": kyc.bank_account_number,
+        "bank_account_number": kyc.banck_account_number,
         "ifsc_code": kyc.ifsc_code,
         "bank_status": kyc.bank_status,
         "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S") if kyc.created_at else "",
@@ -675,7 +675,7 @@ def format_kyc_data(kyc):
 #         "aadhar_number": kyc.aadhar_number,
 #         "aadhar_status": kyc.aadhar_status,
 #         "aadhar_path": f"{s3_base_url}/{kyc.aadhar_path}" if kyc.aadhar_path else "",
-#         "bank_account_number": kyc.bank_account_number,
+#         "bank_account_number": kyc.banck_account_number,
 #         "ifsc_code": kyc.ifsc_code,
 #         "bank_status": kyc.bank_status,
 #         "created_at": kyc.created_at.strftime("%Y-%m-%d %H:%M:%S") if kyc.created_at else "",
@@ -761,7 +761,7 @@ def admin_customer_kyc_details(request):
             if aadhar:
                 kyc_records = kyc_records.filter(aadhar_number__icontains=aadhar)
             if bank_no:
-                kyc_records = kyc_records.filter(bank_account_number__icontains=bank_no)
+                kyc_records = kyc_records.filter(banck_account_number__icontains=bank_no)
 
             total = kyc_records.count()
             paginated_kyc = kyc_records.order_by("-created_at")[offset:offset + limit]

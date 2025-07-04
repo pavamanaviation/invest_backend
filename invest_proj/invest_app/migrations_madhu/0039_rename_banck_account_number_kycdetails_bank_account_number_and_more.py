@@ -12,17 +12,17 @@ class Migration(migrations.Migration):
     operations = [
         migrations.RenameField(
             model_name='kycdetails',
-            old_name='banck_account_number',
+            old_name='bank_account_number',
             new_name='bank_account_number',
         ),
         migrations.RenameField(
             model_name='kycdetails',
-            old_name='banck_name',
+            old_name='bank_name',
             new_name='bank_name',
         ),
         migrations.RenameField(
             model_name='kycdetails',
-            old_name='banck_task_id',
+            old_name='bank_task_id',
             new_name='bank_task_id',
         ),
     ]

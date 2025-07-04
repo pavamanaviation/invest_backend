@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('invest_app', '0013_kycdetails_banck_task_id_kycdetails_idfy_bank_status'),
+        ('invest_app', '0013_kycdetails_bank_task_id_kycdetails_idfy_bank_status'),
     ]
 
     operations = [

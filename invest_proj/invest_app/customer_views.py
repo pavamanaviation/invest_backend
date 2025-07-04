@@ -1,3 +1,4 @@
+import string
 from invest_app.utils.shared_imports import *
 from invest_app.utils.sessions import customer_login_required 
 from .models import Admin, CustomerRegister,PaymentDetails, KYCDetails, CustomerMoreDetails, NomineeDetails, Role
@@ -13,7 +14,7 @@ from .utils.idfy_verification import (check_idfy_status_by_request_id,
 submit_idfy_aadhar_ocr, submit_idfy_pan_ocr, check_idfy_task_status,
  submit_idfy_pan_verification)
 
-
+# --------------
 def get_indian_time():
     india_tz = pytz.timezone('Asia/Kolkata')
     return timezone.now().astimezone(india_tz)
@@ -37,7 +38,7 @@ def customer_register(request):
         otp = None
         customer = None
 
-        # 🔹 Google Signup Flow
+        #Google Signup Flow
         if token:
             google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
             response = requests.get(google_url)
@@ -139,6 +140,7 @@ def customer_register(request):
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
 
 @csrf_exempt
 def verify_customer_otp(request):
@@ -255,8 +257,9 @@ def verify_customer_otp(request):
                 "account_status": customer.account_status,
                 "session_id": request.session.session_key
             }, status=200)
-
-        # Partial verification response
+        
+        request.session['customer_id'] = customer.id
+        request.session.save()
         response_data = {
             "message": "OTP verified successfully.",
             "customer_id": customer.id,
@@ -266,6 +269,7 @@ def verify_customer_otp(request):
             "last_name": customer.last_name,
             "register_status": customer.register_status,
             "account_status": customer.account_status,
+            "session_id": request.session.session_key,
         }
 
         if customer.register_status == 1 and customer.account_status == 1:
@@ -286,15 +290,14 @@ def customer_register_sec_phase(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = data.get('customer_id')
+        customer_id = request.session.get('customer_id')
         email = data.get('email')
         mobile_no = data.get('mobile_no')
         first_name = data.get('first_name')
         last_name = data.get('last_name')
 
         if not customer_id:
-            return JsonResponse({"error": "Customer ID is required."}, status=400)
-
+            return JsonResponse({"error": "Customer ID not found in session or request."}, status=400)
         try:
             customer = CustomerRegister.objects.get(id=customer_id)
         except CustomerRegister.DoesNotExist:
@@ -602,6 +605,8 @@ def customer_profile_view(request):
 
         action = str(data.get('action', 'view')).strip().lower()
         customer_id = request.session.get('customer_id')
+        if not customer_id:
+            return JsonResponse({"error": "Unauthorized: Login required."}, status=403)
         # session_customer_id = request.session.get('customer_id')
         # if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
         #     return JsonResponse({"error": "Unauthorized: Login required."}, status=403)
@@ -626,7 +631,7 @@ def customer_profile_view(request):
 
         if update_fields:
             customer.save(update_fields=update_fields)
-        kyc= KYCDetails.objects.filter(customer=customer, pan_status=1).only("pan_name").first()
+        kyc= KYCDetails.objects.filter(customer=customer, pan_status=1).only("pan_name","pan_dob","aadhar_gender").first()
         full_name = kyc.pan_name if kyc and kyc.pan_name else f"{customer.first_name} {customer.last_name}"
 
         return JsonResponse({
@@ -640,6 +645,8 @@ def customer_profile_view(request):
             "account_status": customer.account_status,
             "kyc_accept_status": customer.kyc_accept_status,
             "payment_accept_status": customer.payment_accept_status,
+            "dob":kyc.pan_dob,
+            "gender":kyc.aadhar_gender
         }, status=200)
 
     except json.JSONDecodeError:
@@ -665,7 +672,8 @@ def get_location_by_pincode(pincode):
     except:
         pass
     return {}
-    
+
+@customer_login_required 
 @csrf_exempt
 def customer_more_details(request):
     if request.method != 'POST':
@@ -673,13 +681,10 @@ def customer_more_details(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = data.get('customer_id')
-        session_customer_id = request.session.get('customer_id')
+        customer_id = request.session.get('customer_id')
 
-        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-        # Fetch customer using only required fields
+        if not customer_id:
+            return JsonResponse({"error": "Unauthorized: Login required."}, status=403)
         customer = CustomerRegister.objects.only(
             "id", "first_name", "last_name", "email", "mobile_no",
             "register_status", "account_status"
@@ -688,7 +693,6 @@ def customer_more_details(request):
         if not customer:
             return JsonResponse({"error": "Customer not found."}, status=404)
 
-        # Check if details already submitted
         more = CustomerMoreDetails.objects.filter(customer=customer).first()
 
         if more and more.personal_status == 1:
@@ -776,17 +780,15 @@ def customer_more_details(request):
 # -----------------------------------------
 
 
-
+@customer_login_required
 @csrf_exempt
 def verify_pan_document(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Invalid request method'}, status=405)
 
-    customer_id = request.POST.get('customer_id')
-    session_customer_id = request.session.get('customer_id')
+    customer_id = request.session.get('customer_id')
     if not customer_id:
-        return JsonResponse({'error': 'Invalid or missing customer ID'}, status=403)
-
+        return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
     pan_file = request.FILES.get('pan_doc')
     if not pan_file:
         return JsonResponse({'error': 'PAN document is required'}, status=400)
@@ -921,19 +923,19 @@ def get_customer_document_path(customer_id, first_name, last_name, doc_type):
             return key  # Return PAN or Aadhar path
 
     return None
-
+@customer_login_required
 @csrf_exempt
 def get_pan_verification_status(request):
     import traceback
 
     try:
+        customer_id = request.session.get('customer_id')
         request_id = request.GET.get('request_id')
-        customer_id = request.GET.get('customer_id')
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+        if not request_id:
+            return JsonResponse({'error': 'Request_id is required'}, status=400)
 
-        if not request_id or not customer_id:
-            return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
-
-        # Fetch customer
         customer = CustomerRegister.objects.get(id=customer_id)
 
         # Get OCR result by request_id
@@ -988,13 +990,14 @@ def get_pan_verification_status(request):
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
     
+@customer_login_required
 @csrf_exempt
 def get_pan_source_verification_status(request):
+    customer_id = request.session.get('customer_id')
     request_id = request.GET.get("request_id")
-    customer_id = request.GET.get("customer_id")
 
-    if not request_id or not customer_id:
-        return JsonResponse({'error': 'Missing request_id or customer_id'}, status=400)
+    if not request_id:
+        return JsonResponse({'error': 'Missing request_id'}, status=400)
 
     try:
         customer = CustomerRegister.objects.get(id=customer_id)
@@ -1150,17 +1153,15 @@ def validate_and_upload_document(file_obj, customer, doc_type='aadhar'):
     file_url = generate_presigned_url(file_key, expires_in=300)
 
     return file_key, file_url, None
-
+@customer_login_required
 @csrf_exempt
 def verify_aadhar_document(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Invalid request method'}, status=405)
 
-    customer_id = request.POST.get('customer_id')
-    session_customer_id = request.session.get('customer_id')
+    customer_id = request.session.get('customer_id')
     if not customer_id:
-        return JsonResponse({'error': 'Invalid or missing customer ID'}, status=403)
-
+        return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
     aadhar_file = request.FILES.get('aadhar_doc')
     if not aadhar_file:
         return JsonResponse({'error': 'aadhar document is required'}, status=400)
@@ -1246,12 +1247,7 @@ def verify_aadhar_document(request):
                         "admin": admin,
                     }
                 )
-                CustomerMoreDetails.objects.create(
-                    customer=customer,
-                    defaults={
-                        "gender": aadhar_gender.lower() if aadhar_gender else None
-                    }
-                )
+                
                 return JsonResponse({
                     'status': 'success',
                     'message': 'aadhar KYC matched with PAN and saved successfully.',
@@ -1276,14 +1272,15 @@ def verify_aadhar_document(request):
         import traceback
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
-    
+@customer_login_required    
 @csrf_exempt
 def get_aadhar_verification_status(request):
+    customer_id = request.session.get('customer_id')
     request_id = request.GET.get('request_id')
-    customer_id = request.GET.get('customer_id')
-
-    if not request_id or not customer_id:
-        return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
+    if not customer_id:
+        return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+    if not request_id:
+        return JsonResponse({'error': 'Request_id is required'}, status=400)
 
     try:
         customer = CustomerRegister.objects.get(id=customer_id)
@@ -1368,6 +1365,7 @@ def get_aadhar_verification_status(request):
             customer=customer,
             defaults={
                 "aadhar_number": extracted_aadhar_number,
+                "aadhar_gender": aadhar_gender,
                 "aadhar_status": aadhar_status,
                 "idfy_aadhar_status": idfy_aadhar_status,
                 "aadhar_task_id": task_id,
@@ -1376,12 +1374,7 @@ def get_aadhar_verification_status(request):
                 "admin": admin,
             }
         )
-        CustomerMoreDetails.objects.create(
-            customer=customer,
-            defaults={
-                "gender": aadhar_gender.lower() if aadhar_gender else None
-            }
-        )
+      
         return JsonResponse({
             "status": "completed",
             "message": "Aadhaar KYC verified successfully after name and DOB matched with PAN.",
@@ -1461,6 +1454,76 @@ def get_aadhar_verification_status(request):
 
 
 # ----------------------------------------
+# @customer_login_required
+# @csrf_exempt
+# def bank_account_verification_view(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.session.get('customer_id')
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+#         account_number = data.get("account_number")
+#         ifsc = data.get("ifsc")
+
+#         session_customer_id = request.session.get('customer_id')
+#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
+#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
+
+#         if not customer_id:
+#             return JsonResponse({'error': 'customer_id is required'}, status=400)
+
+#         customer = get_object_or_404(CustomerRegister, id=customer_id)
+#         kyc = KYCDetails.objects.filter(customer=customer).first()
+
+#         # Action: view_only
+#         if kyc and kyc.bank_status == 1:
+#             return JsonResponse({
+#                 "action": "view_only",
+#                 "message": "Bank account already verified.Please proceed for next.",
+#                 "bank_status": kyc.bank_status,
+#                 "idfy_bank_status": kyc.idfy_bank_status
+#             }, status=200)
+
+#         #Action: verify
+#         if not account_number or not ifsc:
+#             return JsonResponse({'error': 'account_number and ifsc are required for verification'}, status=400)
+
+#         task_id, result = verify_bank_account_sync(account_number, ifsc)
+#         idfy_bank_status = result.get("status", "")
+#         source_output = result.get("result", {}).get("source_output", {})
+#         verified = source_output.get("verified", False)
+#         bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
+
+#         # bank_status = 1 if idfy_bank_status == "completed" and verified else 2 if not verified else 0
+#         bank_status = 1 if idfy_bank_status == "completed" else 0
+#         KYCDetails.objects.update_or_create(
+#             customer=customer,
+#             defaults={
+#                 "banck_account_number": account_number,
+#                 "ifsc_code": ifsc,
+#                 "bank_name": bank_name,
+#                 "bank_task_id": task_id,
+#                 "idfy_bank_status": idfy_bank_status,
+#                 "bank_status": bank_status
+#             }
+#         )
+
+#         return JsonResponse({
+#             "action": "verify",
+#             "message": "Bank verification completed.",
+#             "verified": verified,
+#             "bank_status": bank_status,
+#             "idfy_bank_status": idfy_bank_status,
+#             "task_id": task_id,
+#             "raw_response": result
+#         }, status=200)
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+@customer_login_required
 @csrf_exempt
 def bank_account_verification_view(request):
     if request.method != 'POST':
@@ -1468,41 +1531,73 @@ def bank_account_verification_view(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = data.get('customer_id')
+        customer_id = request.session.get('customer_id')
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
         account_number = data.get("account_number")
         ifsc = data.get("ifsc")
 
-        session_customer_id = request.session.get('customer_id')
-        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-        if not customer_id:
-            return JsonResponse({'error': 'customer_id is required'}, status=400)
+        if not account_number or not ifsc:
+            return JsonResponse({'error': 'account_number and ifsc are required'}, status=400)
 
         customer = get_object_or_404(CustomerRegister, id=customer_id)
         kyc = KYCDetails.objects.filter(customer=customer).first()
 
-        # Action: view_only
+        # If already verified, return early
         if kyc and kyc.bank_status == 1:
             return JsonResponse({
                 "action": "view_only",
-                "message": "Bank account already verified.Please proceed for next.",
+                "message": "Bank account already verified. Please proceed to the next step.",
                 "bank_status": kyc.bank_status,
                 "idfy_bank_status": kyc.idfy_bank_status
             }, status=200)
 
-        #Action: verify
-        if not account_number or not ifsc:
-            return JsonResponse({'error': 'account_number and ifsc are required for verification'}, status=400)
-
+        # Call sync function and parse
         task_id, result = verify_bank_account_sync(account_number, ifsc)
         idfy_bank_status = result.get("status", "")
-        source_output = result.get("result", {}).get("source_output", {})
-        verified = source_output.get("verified", False)
-        bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
+        result_data = result.get("result", {})
 
-        # bank_status = 1 if idfy_bank_status == "completed" and verified else 2 if not verified else 0
-        bank_status = 1 if idfy_bank_status == "completed" else 0
+        # Extract holder name properly
+        bank_holder_name = (
+            result_data.get("name_at_bank") or
+            result_data.get("account_holder_name") or
+            result_data.get("customer_name") or
+            ""
+        ).strip()
+
+        # Use "id_found" as verified check (as per your response)
+        verified = result_data.get("status", "") == "id_found"
+        bank_name = result_data.get("bank_name", "") or bank_holder_name
+        pan_name = kyc.pan_name.strip() if kyc and kyc.pan_name else ""
+
+        # If name missing in response
+        if not bank_holder_name:
+            return JsonResponse({
+                "action": "manual_review",
+                "message": "Bank holder name not found. Cannot perform name match.",
+                "bank_holder_name": "",
+                "pan_name": pan_name,
+                "verified": verified,
+                "idfy_bank_status": idfy_bank_status,
+                "raw_response": result
+            }, status=400)
+
+        # Compare PAN and Bank Holder Name (case-insensitive)
+        is_name_matched = pan_name.lower() == bank_holder_name.lower()
+
+        if not is_name_matched:
+            return JsonResponse({
+                "action": "manual_review",
+                "message": "Name mismatch between PAN and bank account holder.",
+                "bank_holder_name": bank_holder_name,
+                "pan_name": pan_name,
+                "verified": verified,
+                "idfy_bank_status": idfy_bank_status,
+                "raw_response": result
+            }, status=400)
+
+        # Save only if matched
         KYCDetails.objects.update_or_create(
             customer=customer,
             defaults={
@@ -1511,54 +1606,51 @@ def bank_account_verification_view(request):
                 "bank_name": bank_name,
                 "bank_task_id": task_id,
                 "idfy_bank_status": idfy_bank_status,
-                "bank_status": bank_status
+                "bank_status": 1 if idfy_bank_status == "completed" else 0,
+                "bank_holder_name": bank_holder_name,
+                "bank_pan_name_match": True
             }
         )
 
         return JsonResponse({
             "action": "verify",
-            "message": "Bank verification completed.",
+            "message": "Bank verification successful. Details saved.",
             "verified": verified,
-            "bank_status": bank_status,
+            "bank_status": 1 if idfy_bank_status == "completed" else 0,
             "idfy_bank_status": idfy_bank_status,
             "task_id": task_id,
+            "bank_holder_name": bank_holder_name,
+            "pan_name": pan_name,
+            "name_matched": True,
             "raw_response": result
         }, status=200)
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+@customer_login_required
 @csrf_exempt
 def upload_pdf_document(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Only POST allowed'}, status=405)
 
-    customer_id = None
-    doc_type = None
-    file = None
+    customer_id = request.session.get('customer_id')
+    if not customer_id:
+        return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
 
-    # 1. Handle JSON status-check requests (no file required)
+    customer = get_object_or_404(CustomerRegister, id=customer_id)
+    kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
+    more, _ = CustomerMoreDetails.objects.get_or_create(customer=customer)
+
+    # Handle JSON status-check request
     if request.content_type.startswith('application/json'):
         try:
             data = json.loads(request.body)
-            customer_id = data.get('customer_id')
             doc_type = data.get('doc_type')
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON.'}, status=400)
 
-        # Session validation
-        session_customer_id = request.session.get('customer_id')
-        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-        if not customer_id or not doc_type:
-            return JsonResponse({'error': 'Customer ID, doc_type required'}, status=400)
-
-        if doc_type not in ['selfie', 'signature']:
+        if not doc_type or doc_type not in ['selfie', 'signature']:
             return JsonResponse({'error': "Status check only supported for 'selfie' or 'signature'"}, status=400)
-
-        # View-only status check
-        customer = get_object_or_404(CustomerRegister, id=customer_id)
-        more, _ = CustomerMoreDetails.objects.get_or_create(customer=customer)
 
         if doc_type == 'selfie':
             return JsonResponse({
@@ -1566,7 +1658,6 @@ def upload_pdf_document(request):
                 "selfie_status": more.selfie_status,
                 "file_path": more.selfie_path if more.selfie_status == 1 else None,
             })
-
         elif doc_type == 'signature':
             return JsonResponse({
                 "action": "view_only" if more.signature_status == 1 else "not_uploaded",
@@ -1574,160 +1665,37 @@ def upload_pdf_document(request):
                 "file_path": more.signature_path if more.signature_status == 1 else None,
             })
 
+    # Handle file upload (FormData)
     else:
-        customer_id = request.POST.get('customer_id')
         doc_type = request.POST.get('doc_type')
         file = request.FILES.get('kyc_file')
 
-        # Session validation
-        session_customer_id = request.session.get('customer_id')
-        if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-            return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-        if not customer_id or not doc_type or not file:
-            return JsonResponse({'error': 'Customer ID, doc_type, and file are required.'}, status=400)
+        if not doc_type or not file:
+            return JsonResponse({'error': 'doc_type and file are required.'}, status=400)
 
         if doc_type not in ['aadhar', 'pan', 'selfie', 'signature']:
             return JsonResponse({'error': "Invalid doc_type."}, status=400)
 
-        customer = get_object_or_404(CustomerRegister, id=customer_id)
-        kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
-        more, _ = CustomerMoreDetails.objects.get_or_create(customer=customer)
+        file_key, file_url, error_response = validate_and_upload_document(file, customer, doc_type)
+        if error_response:
+            return error_response
 
-        file_name = file.name
-        mime_type, _ = mimetypes.guess_type(file_name)
-        file_ext = os.path.splitext(file_name)[1].lower()
+        if doc_type == 'selfie':
+            more.selfie_path = file_key
+            more.selfie_status = 1
+        elif doc_type == 'signature':
+            more.signature_path = file_key
+            more.signature_status = 1
 
-        allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
-        allowed_mime_types = ['application/pdf', 'image/jpeg', 'image/png']
-
-        if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
-            return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed.'}, status=400)
-
-        customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
-        # customer_folder = f"{customer.id}_{customer_name}"
-        # s3_filename = f"{customer_folder}/{doc_type}_{customer_name}{file_ext}"
-        # customer_name = f"{first_name}{last_name}".replace(" ", "").lower()
-        customer_folder = f"customerdoc/{customer_id}_{customer_name}/"
-        s3_filename = f"{customer_folder}{doc_type}_{customer_name}{file_ext}"
-
-        try:
-            s3_url = upload_file_to_s3(file, s3_filename)
-
-            if doc_type == 'aadhar':
-                kyc.aadhar_path = s3_filename
-            elif doc_type == 'pan':
-                kyc.pan_path = s3_filename
-            elif doc_type == 'selfie':
-                more.selfie_path = s3_filename
-                more.selfie_status = 1
-            elif doc_type == 'signature':
-                more.signature_path = s3_filename
-                more.signature_status = 1
-
-            kyc.save()
-            more.save()
-
-            return JsonResponse({
-                "status": "success",
-                "message": f"{doc_type.capitalize()} uploaded successfully.",
-                "file_url": s3_url,
-                "selfie_status": more.selfie_status,
-                "signature_status": more.signature_status
-            })
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
-
-import boto3
-import cv2
-import numpy as np
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.conf import settings
-from insightface.app import FaceAnalysis
-from io import BytesIO
-
-# Initialize InsightFace (CPU only)
-app = FaceAnalysis(name='buffalo_l')
-app.prepare(ctx_id=-1)  # Use CPU only
-
-def read_image_from_s3(bucket_name, key):
-    s3 = boto3.client(
-        's3',
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_S3_REGION_NAME
-    )
-    obj = s3.get_object(Bucket=bucket_name, Key=key)
-    content = obj['Body'].read()
-    np_array = np.frombuffer(content, np.uint8)
-    return cv2.imdecode(np_array, cv2.IMREAD_COLOR)
-@csrf_exempt
-def match_selfie_with_s3_document(request):
-    if request.method != 'POST':
-        return JsonResponse({'error': 'Only POST allowed'}, status=405)
-
-    selfie = request.FILES.get('selfie')
-    if not selfie:
-        return JsonResponse({'error': 'Selfie is required'}, status=400)
-
-    try:
-        # Step 1: Load selfie image
-        selfie_bytes = selfie.read()
-        selfie_array = np.frombuffer(selfie_bytes, np.uint8)
-        selfie_img = cv2.imdecode(selfie_array, cv2.IMREAD_COLOR)
-        selfie_faces = app.get(selfie_img)
-
-        if not selfie_faces:
-            return JsonResponse({'match': False, 'message': '❌ No face found in selfie'})
-
-        selfie_embedding = selfie_faces[0].embedding
-        bucket = "pavamaninvestdoc"
-        document_paths = {
-            "pan": "customerdoc/pan.jpeg",
-            "aadhar": "customerdoc/aadhar.jpeg"
-        }
-
-        failed_scores = {}  # ✅ Initialize here
-
-        for doc_type, s3_key in document_paths.items():
-            try:
-                doc_img = read_image_from_s3(bucket, s3_key)
-                doc_faces = app.get(doc_img)
-                if not doc_faces:
-                    continue
-                doc_embedding = doc_faces[0].embedding
-
-                # Normalize embeddings
-                embedding1 = selfie_embedding / np.linalg.norm(selfie_embedding)
-                embedding2 = doc_embedding / np.linalg.norm(doc_embedding)
-
-                # Cosine similarity
-                score = np.dot(embedding1, embedding2)
-                print(f"[DEBUG] Similarity with {doc_type.upper()}: {score:.4f}")
-                failed_scores[doc_type] = round(float(score), 4)
-
-                if score >= 0.80:  # Match threshold
-                    return JsonResponse({
-                        'match': True,
-                        'matched_with': doc_type,
-                        'similarity_score': float(score),
-                        'similarity_scores': failed_scores,
-                        'message': f'✅ Face matched with {doc_type.upper()}'
-                    })
-            except Exception as e:
-                print(f"[ERROR] {doc_type.upper()} doc error:", e)
-                continue
+        more.save()
 
         return JsonResponse({
-            'match': False,
-            'similarity_scores': failed_scores,
-            'message': '❌ Face did not match with PAN or Aadhaar'
+            "status": "success",
+            "message": f"{doc_type.capitalize()} uploaded successfully.",
+            "file_url": file_url,
+            "selfie_status": more.selfie_status,
+            "signature_status": more.signature_status
         })
-
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
-
 
 # -------------------------------------------------------
 def upload_file_to_s3(file_obj, file_key):
@@ -1744,17 +1712,17 @@ def upload_file_to_s3(file_obj, file_key):
     # return file_key
     return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{file_key}"
 
-
+@customer_login_required
 @csrf_exempt
 def initiate_nominee_registration(request):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST method allowed."}, status=405)
     try:
         data, files = request.POST, request.FILES
-        customer_id = data.get("customer_id")
+        customer_id = data.session.get("customer_id")
         mode = data.get("mode", "create").lower()
-        session_customer_id = request.session.get("customer_id")
-
+        if customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
         # if not customer_id or int(customer_id) != int(session_customer_id):
         #     return JsonResponse({"error": "Customer ID mismatch."}, status=403)
 
@@ -1807,7 +1775,7 @@ def initiate_nominee_registration(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-    
+@customer_login_required    
 @csrf_exempt
 def verify_and_update_nominee(request):
     if request.method != "POST":
@@ -1816,12 +1784,11 @@ def verify_and_update_nominee(request):
     try:
         data = request.POST
         otp = data.get("otp")
-        customer_id = data.get("customer_id")
+        customer_id = request.session.get("customer_id")
         mode = "edit"
 
-        session_customer_id = request.session.get("customer_id")
-        # if not customer_id or int(customer_id) != int(session_customer_id):
-        #     return JsonResponse({"error": "Unauthorized request."}, status=403)
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
 
         if not otp:
             return JsonResponse({"error": "OTP is required."}, status=400)
@@ -1880,7 +1847,7 @@ def verify_and_update_nominee(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-
+@customer_login_required
 @csrf_exempt
 def verify_and_save_nominee(request):
     if request.method != "POST":
@@ -1889,13 +1856,11 @@ def verify_and_save_nominee(request):
     try:
         data = request.POST
         otp = data.get("otp")
-        customer_id = data.get("customer_id")
+        customer_id = request.session.get("customer_id")
         mode = "create"
 
-        session_customer_id = request.session.get("customer_id")
-        # if not customer_id or int(customer_id) != int(session_customer_id):
-        #     return JsonResponse({"error": "Unauthorized request."}, status=403)
-
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
         if not otp:
             return JsonResponse({"error": "OTP is required."}, status=400)
 
@@ -1979,23 +1944,22 @@ def preview_customer_details(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = data.get('customer_id')
-        session_customer_id = request.session.get('customer_id')
-        if not session_customer_id or int(session_customer_id) != int(customer_id):
-            return JsonResponse({"error": "Unauthorized: Session customer ID mismatch."}, status=403)
-
-        customer = CustomerRegister.objects.only("id", "email", "mobile_no").filter(id=session_customer_id).first()
-        kyc = KYCDetails.objects.only("id", "pan_number","pan_name","pan_dob", "aadhar_number", "bank_account_number",
-        "ifsc_code", "bank_name","aadhar_path", "pan_path").filter(customer_id=session_customer_id,status=1).first()
+        customer_id = data.session.get('customer_id')
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+       
+        customer = CustomerRegister.objects.only("id", "email", "mobile_no").filter(id=customer_id).first()
+        kyc = KYCDetails.objects.only("id", "pan_number","pan_name","pan_dob", "aadhar_number","aadhar_dob", "banck_account_number",
+        "ifsc_code", "banck_name","aadhar_path", "pan_path").filter(customer_id=customer_id,status=1).first()
         more = CustomerMoreDetails.objects.only(
             "address", "city", "state", "country", "pincode", "mandal",
             "district","gender", "profession", "designation", "personal_status",
             "selfie_path", "signature_path"
-        ).filter(customer_id=session_customer_id,status=1).first()
+        ).filter(customer_id=customer_id,status=1).first()
         nominee = NomineeDetails.objects.only(
             "first_name", "last_name", "relation", "dob", "address_proof",
             "address_proof_path", "id_proof_path","share"
-        ).filter(customer_id=session_customer_id,status=1).first()
+        ).filter(customer_id=customer_id,status=1).first()
 
         if not customer:
             return JsonResponse({"error": "Customer not found."}, status=404)
@@ -2018,9 +1982,10 @@ def preview_customer_details(request):
                 "pan_name": kyc.pan_name,
                 "pan_dob": str(kyc.pan_dob),
                 "aadhar_number": kyc.aadhar_number,
-                "bank_account_number": kyc.bank_account_number,
+                "aadhar_gender":kyc.aadhar_gender,
+                "banck_account_number": kyc.banck_account_number,
                 "ifsc_code": kyc.ifsc_code,
-                "bank_name": kyc.bank_name,
+                "banck_name": kyc.banck_name,
                 "pan_doc_url": get_s3_url(kyc.pan_path),
                 "aadhar_doc_url": get_s3_url(kyc.aadhar_path),
             },
@@ -2054,7 +2019,144 @@ def preview_customer_details(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+    
+@customer_login_required
+@csrf_exempt
+def completed_status(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method is allowed'}, status=405)
 
+    try:
+        customer_id = request.session.get('customer_id')
+
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
+        customer = CustomerRegister.objects.filter(id=customer_id,status=1).first()
+        if not customer:
+            return JsonResponse({'error': 'Customer not found'}, status=404)
+
+        kyc = KYCDetails.objects.filter(customer=customer,status=1).first()
+        if kyc:
+            pan_complete = kyc.pan_status == 1
+            aadhar_complete = kyc.aadhar_status == 1
+        else:
+            pan_complete = aadhar_complete = False
+
+        more = CustomerMoreDetails.objects.filter(customer=customer,status=1).first()
+        if more:
+            personal_complete = more.personal_status == 1
+            selfie_complete = more.selfie_status == 1
+            signature_complete = more.signature_status == 1
+        else:
+            personal_complete = selfie_complete = signature_complete = False
+
+        kyc_completed = (
+            pan_complete and
+            aadhar_complete and
+            personal_complete and
+            selfie_complete and
+            signature_complete
+        )
+
+        # nominee_complete = NomineeDetails.objects.filter(customer=customer, status=1).exists()
+
+        if kyc_completed:
+            return JsonResponse({'message': 'All KYC details are completed.'}, status=200)
+        else:
+            return JsonResponse({
+                'message': 'KYC details are incomplete.',
+                'pan_status': pan_complete,
+                'aadhar_status': aadhar_complete,
+                'personal_status': personal_complete,
+                'selfie_status': selfie_complete,
+                'signature_status': signature_complete,
+            }, status=200)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+# @customer_login_required
+# @csrf_exempt
+# def create_drone_order(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = data.session.get('customer_id')
+#         email = data.get('email')
+#         current_payment = float(data.get('price'))  # what customer wants to pay now
+        
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+#         if not all([email, current_payment]):
+#             return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+#         customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
+#         if not customer:
+#             return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#         total_required = 1200000  # ₹12,00,000 fixed total
+
+#         # Total paid so far
+#         total_paid = PaymentDetails.objects.filter(
+#             customer=customer,
+#             drone_payment_status='paid'
+#         ).aggregate(total_paid=Sum('amount'))['total_paid'] or 0
+
+#         # Remaining amount
+#         remaining = total_required - total_paid
+
+#         if remaining <= 0:
+#             return JsonResponse({'error': 'Full payment of ₹12L already completed.'}, status=400)
+
+#         if current_payment > remaining:
+#             return JsonResponse({'error': f'Maximum remaining amount is ₹{remaining}. Please enter valid amount.'}, status=400)
+
+#         # Determine next part number
+#         last_part = PaymentDetails.objects.filter(customer=customer).aggregate(
+#             last_part=Max('part_number')
+#         )['last_part'] or 0
+#         next_part = last_part + 1
+
+#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+#         amount_paise = int(current_payment * 100)
+
+#         order = client.order.create({
+#             'amount': amount_paise,
+#             'currency': 'INR',
+#             'payment_capture': 1,
+#             'notes': {
+#                 'customer_id': str(customer_id),
+#                 'email': email,
+#                 'part': str(next_part)
+#             }
+#         })
+
+#         PaymentDetails.objects.create(
+#             customer=customer,
+#             razorpay_order_id=order['id'],
+#             amount=current_payment,
+#             part_number=next_part,
+#             drone_payment_status='created'
+#         )
+
+#         return JsonResponse({
+#             'message': f'Order for part {next_part} created.',
+#             'orders': [{
+#                 'order_id': order['id'],
+#                 'razorpay_key': settings.RAZORPAY_KEY_ID,
+#                 'amount': current_payment,
+#                 'currency': 'INR',
+#                 'email': email,
+#                 'part_number': next_part
+#             }]
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+@customer_login_required
 @csrf_exempt
 def create_drone_order(request):
     if request.method != 'POST':
@@ -2062,82 +2164,243 @@ def create_drone_order(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = data.get('customer_id')
+        customer_id = request.session.get('customer_id')
         email = data.get('email')
-        current_payment = float(data.get('price'))  # what customer wants to pay now
+        quantity = int(data.get('quantity') or 1)
+        current_payment = float(data.get('price') or 0)
+        payment_type = data.get('payment_type', 'fullpayment').lower()  # full or partial
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
 
-        session_customer_id = request.session.get('customer_id')
-        if not session_customer_id or int(session_customer_id) != int(customer_id):
-            return JsonResponse({"error": "Unauthorized: Session customer ID mismatch."}, status=403)
-        if not all([customer_id, email, current_payment]):
+        if not all([email, current_payment, quantity]):
             return JsonResponse({'error': 'Missing required fields'}, status=400)
+        if payment_type not in ["fullpayment", "partialpayment"]:
+            return JsonResponse({'error': 'Invalid payment type'}, status=400)
 
-        customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
+        if quantity > 10:
+            return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
+
+        customer = CustomerRegister.objects.filter(id=customer_id, email=email,status=1).first()
         if not customer:
             return JsonResponse({'error': 'Customer not found'}, status=404)
 
-        total_required = 1200000  # ₹12,00,000 fixed total
+        unit_price = 1200000
+        total_required = unit_price * quantity
 
-        # Total paid so far
-        total_paid = PaymentDetails.objects.filter(
-            customer=customer,
-            drone_payment_status='paid'
-        ).aggregate(total_paid=Sum('amount'))['total_paid'] or 0
+        if current_payment > total_required:
+            return JsonResponse({
+                'error': f'Maximum amount is ₹{total_required:,}. Please enter valid amount.'
+            }, status=400)
 
-        # Remaining amount
-        remaining = total_required - total_paid
+        # 🔍 Get latest drone_order_id
+        latest_order = PaymentDetails.objects.filter(customer=customer,status=1).order_by('-created_at').first()
+        if latest_order:
+            latest_order_id = latest_order.drone_order_id
+            latest_order_status = PaymentDetails.objects.filter(
+                customer=customer,
+                drone_order_id=latest_order_id
+            ).values_list('payment_status', flat=True).first()
 
-        if remaining <= 0:
-            return JsonResponse({'error': 'Full payment of ₹12L already completed.'}, status=400)
+            # If the previous order is unpaid (status not 1), delete it
+            if latest_order_status != 1:
+                PaymentDetails.objects.filter(
+                    customer=customer,
+                    drone_order_id=latest_order_id
+                ).delete()
 
-        if current_payment > remaining:
-            return JsonResponse({'error': f'Maximum remaining amount is ₹{remaining}. Please enter valid amount.'}, status=400)
-
-        # Determine next part number
-        last_part = PaymentDetails.objects.filter(customer=customer).aggregate(
-            last_part=Max('part_number')
-        )['last_part'] or 0
-        next_part = last_part + 1
+        # Razorpay per-order limit (₹5,00,000)
+        MAX_RZP_ORDER_LIMIT = 500000
 
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-        amount_paise = int(current_payment * 100)
+        orders = []
+        drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+        admin = Admin.objects.filter(id=1).first()
+        if not admin:
+            return JsonResponse({'error': 'Admin not found'}, status=500)
 
-        order = client.order.create({
-            'amount': amount_paise,
-            'currency': 'INR',
-            'payment_capture': 1,
-            'notes': {
-                'customer_id': str(customer_id),
-                'email': email,
-                'part': str(next_part)
-            }
-        })
+        # last_part = PaymentDetails.objects.filter(customer=customer).aggregate(
+        #     last_part=Max('part_number')
+        # )['last_part'] or 0
+        # next_part = last_part + 1
+        # Always start from part 1 for new drone_order_id
+        next_part = 1
 
-        PaymentDetails.objects.create(
-            customer=customer,
-            razorpay_order_id=order['id'],
-            amount=current_payment,
-            part_number=next_part,
-            drone_payment_status='created'
-        )
 
-        return JsonResponse({
-            'message': f'Order for part {next_part} created.',
-            'orders': [{
+        amount_remaining = current_payment
+        while amount_remaining > 0:
+            split_amount = min(amount_remaining, MAX_RZP_ORDER_LIMIT)
+            amount_paise = int(split_amount * 100)
+
+            order = client.order.create({
+                'amount': amount_paise,
+                'currency': 'INR',
+                'payment_capture': 1,
+                'notes': {
+                    'customer_id': str(customer_id),
+                    'email': email,
+                    'drone_order_id': drone_order_id,
+                    'part': str(next_part),
+                    'quantity': str(quantity),
+                    'unit_price': str(unit_price),
+                }
+            })
+
+            PaymentDetails.objects.create(
+                customer=customer,
+                razorpay_order_id=order['id'],
+                amount=split_amount,
+                part_number=next_part,
+                drone_payment_status='created',
+                quantity=quantity,
+                drone_order_id=drone_order_id,
+                payment_type=payment_type,
+                admin=admin
+            )
+
+            orders.append({
                 'order_id': order['id'],
                 'razorpay_key': settings.RAZORPAY_KEY_ID,
-                'amount': current_payment,
+                'amount': split_amount,
                 'currency': 'INR',
                 'email': email,
-                'part_number': next_part
-            }]
+                'part_number': next_part,
+                'quantity': quantity,
+                
+            })
+
+            amount_remaining -= split_amount
+            next_part += 1
+
+        return JsonResponse({
+            'message': f'{len(orders)} order(s) created.',
+            'drone_order_id': drone_order_id,
+            'customer_id': customer_id,
+            'payment_type':payment_type,
+            'orders': orders
         })
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+# @customer_login_required
+# @csrf_exempt
+# def create_drone_order(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = request.session.get('customer_id')
+#         email = data.get('email')
+#         quantity = int(data.get('quantity') or 1)
+#         current_payment = float(data.get('price'))  # Total user wants to pay
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+        
+#         if not all([email, current_payment, quantity]):
+#             return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+#         if quantity > 10:
+#             return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
+
+#         customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
+#         if not customer:
+#             return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#         unit_price = 1200000
+#         total_required = unit_price * quantity
+
+#         # Total paid so far
+#         total_paid = PaymentDetails.objects.filter(
+#             customer=customer,
+#             drone_payment_status='paid'
+#         ).aggregate(total_paid=Sum('amount'))['total_paid'] or 0
+
+#         remaining = total_required - total_paid
+#         if remaining <= 0:
+#             return JsonResponse({'error': f'Full payment of ₹{total_required:,} already completed.'}, status=400)
+
+#         if current_payment > remaining:
+#             return JsonResponse({
+#                 'error': f'Maximum remaining amount is ₹{remaining:,}. Please enter valid amount.'
+#             }, status=400)
+
+#         # Razorpay per-order limit (₹5,00,000)
+#         MAX_RZP_ORDER_LIMIT = 500000
+
+#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+#         orders = []
+#         drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+#         admin=Admin.objects.filter(id=1).first()
+#         if not admin:
+#             return JsonResponse({'error': 'Admin not found'}, status=500)
+#         # Get last part number
+#         last_part = PaymentDetails.objects.filter(customer=customer).aggregate(
+#             last_part=Max('part_number')
+#         )['last_part'] or 0
+#         next_part = last_part + 1
+
+#         # Split into multiple orders
+#         amount_remaining = current_payment
+#         while amount_remaining > 0:
+#             split_amount = min(amount_remaining, MAX_RZP_ORDER_LIMIT)
+#             amount_paise = int(split_amount * 100)
+
+#             order = client.order.create({
+#                 'amount': amount_paise,
+#                 'currency': 'INR',
+#                 'payment_capture': 1,
+#                 'notes': {
+#                     'customer_id': str(customer_id),
+#                     'email': email,
+#                     'drone_order_id': drone_order_id,
+#                     'part': str(next_part),
+#                     'quantity': str(quantity),
+#                     'unit_price': str(unit_price),
+#                 }
+#             })
+
+#             PaymentDetails.objects.create(
+#                 customer=customer,
+#                 razorpay_order_id=order['id'],
+#                 amount=split_amount,
+#                 part_number=next_part,
+#                 drone_payment_status='created',
+#                 quantity=quantity,
+#                 drone_order_id=drone_order_id,
+#                 admin=admin
+#             )
+
+#             orders.append({
+#                 'order_id': order['id'],
+#                 'razorpay_key': settings.RAZORPAY_KEY_ID,
+#                 'amount': split_amount,
+#                 'currency': 'INR',
+#                 'email': email,
+#                 'part_number': next_part,
+#                 'quantity': quantity,
+                
+#             })
+
+#             amount_remaining -= split_amount
+#             next_part += 1
+
+#         return JsonResponse({
+#             'message': f'{len(orders)} order(s) created.',
+#             'drone_order_id': drone_order_id,
+#             'customer_id': customer_id,
+#             'orders': orders
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+
 @csrf_exempt
 def razorpay_callback(request):
+    print("📥 Webhook HIT!")
     try:
+        print("🔍 Full Payment Payload:", json.loads(request.body))
+
         payload = request.body
         signature = request.headers.get('X-Razorpay-Signature')
 
@@ -2174,43 +2437,196 @@ def razorpay_callback(request):
                 print(f"Payment part {payment.part_number} marked as PAID.")
 
                 all_paid = PaymentDetails.objects.filter(
-                    customer=payment.customer, drone_payment_status='paid'
+                    customer=payment.customer,drone_order_id=payment.drone_order_id,
+                    drone_payment_status='paid'
                 ).count()
+                total_parts = PaymentDetails.objects.filter(
+                    customer=payment.customer,
+                    drone_order_id=payment.drone_order_id
+                ).count()
+                if all_paid == total_parts:
+                    print(f"🎉 All {total_parts} payment parts completed for {payment.drone_order_id}.")
 
-                if all_paid == 3:
-                    print("Full ₹12L drone payment completed.")
+                    PaymentDetails.objects.filter(
+                        drone_order_id=payment.drone_order_id,
+                        customer=payment.customer
+                    ).update(payment_status=1)
 
+                    # Dynamic payment completion check
+                    unit_price = 1200000
+                    quantity = payment.quantity
+                    expected_total = unit_price * quantity
+
+                    total_amount_paid = PaymentDetails.objects.filter(
+                        drone_order_id=payment.drone_order_id,
+                        customer=payment.customer,
+                        drone_payment_status='paid'
+                    ).aggregate(total=Sum('amount'))['total'] or 0
+
+                    if total_amount_paid >= expected_total:
+                        print(f"Full payment of ₹{expected_total:,} completed for {quantity} drone(s).")
         return HttpResponse(status=200)
 
     except Exception as e:
         print("Webhook error:", str(e))
         return JsonResponse({'error': str(e)}, status=500)
-
+    
+@customer_login_required
 @csrf_exempt
-def payment_status_check(request):
+def create_drone_installment_order(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
     try:
-        customer_id = request.GET.get('customer_id')
-
+        data = json.loads(request.body)
+        customer_id = request.session.get('customer_id')
+        email = data.get('email')
+        quantity = int(data.get('quantity', 1))
         if not customer_id:
-            return JsonResponse({'error': 'customer_id is required'}, status=400)
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+        if not email or not quantity:
+            return JsonResponse({'error': 'Missing fields'}, status=400)
 
-        customer = CustomerRegister.objects.filter(id=customer_id).first()
+        customer = CustomerRegister.objects.filter(id=customer_id, email=email).first()
         if not customer:
             return JsonResponse({'error': 'Customer not found'}, status=404)
 
-        total_paid = PaymentDetails.objects.filter(
-            customer=customer,
-            drone_payment_status='paid'
-        ).aggregate(total_paid=Sum('amount'))['total_paid'] or 0
+        total_amount = 1200000 * quantity
+        client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
 
-        completed = total_paid >= 1200000
+        # Single order for EMI/BNPL
+        order = client.order.create({
+            'amount': total_amount * 100,
+            'currency': 'INR',
+            'payment_capture': 1,
+            'notes': {
+                'customer_id': str(customer_id),
+                'email': email,
+                'quantity': str(quantity),
+                'payment_mode': 'installment'
+            }
+        })
+
+        # Save reference
+        PaymentDetails.objects.create(
+            customer=customer,
+            razorpay_order_id=order['id'],
+            amount=total_amount,
+            part_number=1,
+            drone_payment_status='created',
+            quantity=quantity,
+            is_installment=True
+        )
 
         return JsonResponse({
-            'completed': completed,
-            'total_paid': total_paid,
-            'remaining': max(0, 1200000 - total_paid)
+            'message': 'EMI Razorpay order created.',
+            'order': {
+                'order_id': order['id'],
+                'razorpay_key': settings.RAZORPAY_KEY_ID,
+                'amount': total_amount,
+                'currency': 'INR'
+            }
         })
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+@customer_login_required
+@csrf_exempt
+def payment_status_check(request):
+    try:
+        data = json.loads(request.body)
+        customer_id = request.session.get("customer_id")  # ✅ Fix here
+        drone_order_id = data.get("drone_order_id")
+
+        if not customer_id:
+            return JsonResponse({"error": "Unauthorized: Login required"}, status=403)
+
+        if not drone_order_id:
+            # Get latest order
+            latest = PaymentDetails.objects.filter(
+                customer_id=customer_id
+            ).order_by('-id').first()
+            if latest:
+                drone_order_id = latest.drone_order_id
+            else:
+                return JsonResponse({
+                    "paid": False,
+                    "message": "No previous order found."
+                })
+
+        total_parts = PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            drone_order_id=drone_order_id
+        ).count()
+
+        paid_parts = PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            drone_order_id=drone_order_id,
+            drone_payment_status='paid'
+        ).count()
+
+        payment_status = PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            drone_order_id=drone_order_id
+        ).first().payment_status if total_parts > 0 else 0
+
+        return JsonResponse({
+            "paid": paid_parts == total_parts and total_parts > 0,
+            "message": "✅ Full payment completed for this order." if paid_parts == total_parts else f"⚠️ Payment still pending ({paid_parts}/{total_parts})",
+            "payment_status": payment_status,
+            "drone_order_id": drone_order_id
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+@csrf_exempt
+@customer_login_required
+def delete_cancelled_order(request):
+    try:
+        data = json.loads(request.body)
+        customer_id = request.session.get("customer_id")
+        drone_order_id = data.get("drone_order_id")
+
+        if not customer_id or not drone_order_id:
+            return JsonResponse({"error": "Missing customer_id or order_id"}, status=400)
+
+        PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            drone_order_id=drone_order_id,
+            drone_payment_status='created'
+        ).delete()
+
+        return JsonResponse({"message": "Cancelled order deleted successfully."})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+# @customer_login_required
+# @csrf_exempt
+# def payment_status_check(request):
+#     try:
+#         customer_id = request.session.get('customer_id')
+#         if not customer_id:
+#             return JsonResponse({'error': 'customer_id is required'}, status=400)
+
+#         customer = CustomerRegister.objects.filter(id=customer_id).first()
+#         if not customer:
+#             return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#         total_paid = PaymentDetails.objects.filter(
+#             customer=customer,
+#             drone_payment_status='paid'
+#         ).aggregate(total_paid=Sum('amount'))['total_paid'] or 0
+
+#         completed = total_paid >= 1200000
+
+#         return JsonResponse({
+#             'completed': completed,
+#             'total_paid': total_paid,
+#             'remaining': max(0, 1200000 - total_paid)
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
 

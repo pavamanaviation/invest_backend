@@ -2894,27 +2894,3 @@ def save_staged_nominees(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-
-def receipt(request):
-    try:
-        data= json.loads(request.body)
-        customer_id= request.session.get("customer_id")
-        if not customer_id:
-            return JsonResponse({"error": "Unauthorized: Login required"}, status=403)
-        drone_order_id = data.get("drone_order_id")
-        payment = PaymentDetails.objects.get(drone_order_id=drone_order_id)
-        if not payment:
-            return JsonResponse({"error": "Payment not found"}, status=404)
-
-        context = {
-            "payment": payment,
-            "customer": payment.customer,
-            "admin": payment.admin
-        }
-
-        return render(request, 'receipt.html', context)
-
-    except PaymentDetails.DoesNotExist:
-        return JsonResponse({"error": "Payment not found"}, status=404)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)

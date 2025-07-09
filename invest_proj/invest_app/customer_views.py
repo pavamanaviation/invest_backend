@@ -1466,142 +1466,6 @@ def get_aadhar_verification_status(request):
         import traceback
         traceback.print_exc()
         return JsonResponse({'error': f'Error verifying Aadhaar: {str(e)}'}, status=500)
-
-# @csrf_exempt
-# def get_aadhar_verification_status(request):
-#     request_id = request.GET.get('request_id')
-#     customer_id = request.GET.get('customer_id')
-
-#     if not request_id or not customer_id:
-#         return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
-
-#     try:
-#         customer = CustomerRegister.objects.get(id=customer_id)
-#     except CustomerRegister.DoesNotExist:
-#         return JsonResponse({'error': 'Customer not found'}, status=404)
-
-#     try:
-#         # Get aadhar file path from S3
-#         aadhar_path = get_customer_document_path(customer.id, customer.first_name, customer.last_name, 'aadhar')
-
-#         # Fetch OCR result from IDfy
-#         status_code, result = check_idfy_status_by_request_id(request_id)
-#         print("Raw IDfy aadhar result:", result)
-
-#         if isinstance(result, list):
-#             if not result:
-#                 return JsonResponse({'error': 'No result found for this request ID'}, status=404)
-#             result = result[0]
-
-#         status = result.get("status")
-#         extraction = result.get("result", {}).get("extraction_output", {})
-#         admin = Admin.objects.only("id").first()
-#         if not admin:
-#             return JsonResponse({"error": "Admin not found."}, status=500)
-
-#         if status == "completed":
-#             KYCDetails.objects.update_or_create(
-#                 customer=customer,
-#                 defaults={
-#                     "aadhar_number": extraction.get("id_number"),
-#                     "aadhar_name": extraction.get("name_on_card"),
-#                     "aadhar_dob": extraction.get("date_of_birth"),
-#                     "aadhar_gender": extraction.get("gender"),
-#                     "aadhar_status": 1,  # mark verified
-#                     "aadhar_request_id": request_id,
-#                     "idfy_aadhar_status": status,
-#                     "aadhar_task_id": result.get("task_id", ""),
-#                     "aadhar_path": aadhar_path,
-#                     "admin": admin,
-#                 }
-#             )
-
-#             return JsonResponse({
-#                 'status': 'completed',
-#                 'result': extraction,
-#                 'message': 'aadhar KYC details updated successfully.'
-#             })
-
-#         return JsonResponse({
-#             'status': status,
-#             'result': extraction,
-#             'message': 'aadhar verification not yet completed.'
-#         })
-
-#     except Exception as e:
-#         return JsonResponse({'error': f'Error fetching status: {str(e)}'}, status=500)
-
-
-# ----------------------------------------
-# @customer_login_required
-# @csrf_exempt
-# def bank_account_verification_view(request):
-#     if request.method != 'POST':
-#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
-
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = data.session.get('customer_id')
-#         if not customer_id:
-#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-#         account_number = data.get("account_number")
-#         ifsc = data.get("ifsc")
-
-#         session_customer_id = request.session.get('customer_id')
-#         if not customer_id or not session_customer_id or int(customer_id) != int(session_customer_id):
-#             return JsonResponse({"error": "Unauthorized: Customer ID mismatch."}, status=403)
-
-#         if not customer_id:
-#             return JsonResponse({'error': 'customer_id is required'}, status=400)
-
-#         customer = get_object_or_404(CustomerRegister, id=customer_id)
-#         kyc = KYCDetails.objects.filter(customer=customer).first()
-
-#         # Action: view_only
-#         if kyc and kyc.bank_status == 1:
-#             return JsonResponse({
-#                 "action": "view_only",
-#                 "message": "Bank account already verified.Please proceed for next.",
-#                 "bank_status": kyc.bank_status,
-#                 "idfy_bank_status": kyc.idfy_bank_status
-#             }, status=200)
-
-#         #Action: verify
-#         if not account_number or not ifsc:
-#             return JsonResponse({'error': 'account_number and ifsc are required for verification'}, status=400)
-
-#         task_id, result = verify_bank_account_sync(account_number, ifsc)
-#         idfy_bank_status = result.get("status", "")
-#         source_output = result.get("result", {}).get("source_output", {})
-#         verified = source_output.get("verified", False)
-#         bank_name = source_output.get("bank_name") or source_output.get("account_holder_name", "")
-
-#         # bank_status = 1 if idfy_bank_status == "completed" and verified else 2 if not verified else 0
-#         bank_status = 1 if idfy_bank_status == "completed" else 0
-#         KYCDetails.objects.update_or_create(
-#             customer=customer,
-#             defaults={
-#                 "banck_account_number": account_number,
-#                 "ifsc_code": ifsc,
-#                 "bank_name": bank_name,
-#                 "bank_task_id": task_id,
-#                 "idfy_bank_status": idfy_bank_status,
-#                 "bank_status": bank_status
-#             }
-#         )
-
-#         return JsonResponse({
-#             "action": "verify",
-#             "message": "Bank verification completed.",
-#             "verified": verified,
-#             "bank_status": bank_status,
-#             "idfy_bank_status": idfy_bank_status,
-#             "task_id": task_id,
-#             "raw_response": result
-#         }, status=200)
-
-#     except Exception as e:
-#         return JsonResponse({'error': str(e)}, status=500)
 @customer_login_required
 @csrf_exempt
 def bank_account_verification_view(request):
@@ -1792,223 +1656,223 @@ def upload_file_to_s3(file_obj, file_key):
     # return file_key
     return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{file_key}"
 
-@customer_login_required
-@csrf_exempt
-def initiate_nominee_registration(request):
-    if request.method != "POST":
-        return JsonResponse({"error": "Only POST method allowed."}, status=405)
-    try:
-        data, files = request.POST, request.FILES
-        customer_id = data.session.get("customer_id")
-        mode = data.get("mode", "create").lower()
-        if customer_id:
-            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-        # if not customer_id or int(customer_id) != int(session_customer_id):
-        #     return JsonResponse({"error": "Customer ID mismatch."}, status=403)
+# @customer_login_required
+# @csrf_exempt
+# def initiate_nominee_registration(request):
+#     if request.method != "POST":
+#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
+#     try:
+#         data, files = request.POST, request.FILES
+#         customer_id = data.session.get("customer_id")
+#         mode = data.get("mode", "create").lower()
+#         if customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+#         # if not customer_id or int(customer_id) != int(session_customer_id):
+#         #     return JsonResponse({"error": "Customer ID mismatch."}, status=403)
 
-        if mode == "edit":
-            required_fields = ["nominee_id", "first_name", "last_name", "relation"]
-            file_upload_required = False
-        else:
-            required_fields = ["first_name", "last_name", "relation", "dob", "address_proof", "share"]
-            file_fields = ["address_proof_file", "id_proof_file"]
-            file_upload_required = True
+#         if mode == "edit":
+#             required_fields = ["nominee_id", "first_name", "last_name", "relation"]
+#             file_upload_required = False
+#         else:
+#             required_fields = ["first_name", "last_name", "relation", "dob", "address_proof", "share"]
+#             file_fields = ["address_proof_file", "id_proof_file"]
+#             file_upload_required = True
 
-        missing_fields = [f for f in required_fields if not data.get(f)]
-        missing_files = [f for f in file_fields if f not in files] if file_upload_required else []
+#         missing_fields = [f for f in required_fields if not data.get(f)]
+#         missing_files = [f for f in file_fields if f not in files] if file_upload_required else []
 
-        if missing_fields or missing_files:
-            return JsonResponse({"error": f"{', '.join(missing_fields + missing_files)} is required for {mode}."}, status=400)
+#         if missing_fields or missing_files:
+#             return JsonResponse({"error": f"{', '.join(missing_fields + missing_files)} is required for {mode}."}, status=400)
 
-        nominee_data = {k: data[k] for k in required_fields}
-        cache_key_prefix = f"{mode}_nominee_{customer_id}"
-        cache.set(f"{cache_key_prefix}_data", nominee_data, timeout=600)
+#         nominee_data = {k: data[k] for k in required_fields}
+#         cache_key_prefix = f"{mode}_nominee_{customer_id}"
+#         cache.set(f"{cache_key_prefix}_data", nominee_data, timeout=600)
 
-        if file_upload_required:
-            address_file = files["address_proof_file"]
-            id_file = files["id_proof_file"]
+#         if file_upload_required:
+#             address_file = files["address_proof_file"]
+#             id_file = files["id_proof_file"]
 
-            addr_ext = os.path.splitext(address_file.name)[1].lower()
-            id_ext = os.path.splitext(id_file.name)[1].lower()
+#             addr_ext = os.path.splitext(address_file.name)[1].lower()
+#             id_ext = os.path.splitext(id_file.name)[1].lower()
 
-            allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.svg']
-            if addr_ext not in allowed_extensions or id_ext not in allowed_extensions:
-                return JsonResponse({'error': 'Invalid file extension for uploaded files.'}, status=400)
+#             allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.svg']
+#             if addr_ext not in allowed_extensions or id_ext not in allowed_extensions:
+#                 return JsonResponse({'error': 'Invalid file extension for uploaded files.'}, status=400)
 
-            cache.set(f"{cache_key_prefix}_addr_ext", addr_ext, timeout=600)
-            cache.set(f"{cache_key_prefix}_id_ext", id_ext, timeout=600)
+#             cache.set(f"{cache_key_prefix}_addr_ext", addr_ext, timeout=600)
+#             cache.set(f"{cache_key_prefix}_id_ext", id_ext, timeout=600)
 
-            cache.set(f"{cache_key_prefix}_files", {
-                "address_proof_file": address_file.read(),
-                "id_proof_file": id_file.read()
-            }, timeout=600)
+#             cache.set(f"{cache_key_prefix}_files", {
+#                 "address_proof_file": address_file.read(),
+#                 "id_proof_file": id_file.read()
+#             }, timeout=600)
 
-        customer = CustomerRegister.objects.only("id", "mobile_no").get(id=customer_id)
-        otp = generate_otp()
-        customer.otp = otp
-        customer.changed_on = timezone_now()
-        customer.save(update_fields=["otp", "changed_on"])
+#         customer = CustomerRegister.objects.only("id", "mobile_no").get(id=customer_id)
+#         otp = generate_otp()
+#         customer.otp = otp
+#         customer.changed_on = timezone_now()
+#         customer.save(update_fields=["otp", "changed_on"])
 
-        send_bulk_sms([str(customer.mobile_no)], otp)
+#         send_bulk_sms([str(customer.mobile_no)], otp)
 
-        return JsonResponse({"message": f"OTP sent to registered mobile for nominee {mode}."})
+#         return JsonResponse({"message": f"OTP sent to registered mobile for nominee {mode}."})
 
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-@customer_login_required    
-@csrf_exempt
-def verify_and_update_nominee(request):
-    if request.method != "POST":
-        return JsonResponse({"error": "Only POST method allowed."}, status=405)
+#     except Exception as e:
+#         return JsonResponse({"error": str(e)}, status=500)
+# @customer_login_required    
+# @csrf_exempt
+# def verify_and_update_nominee(request):
+#     if request.method != "POST":
+#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
 
-    try:
-        data = request.POST
-        otp = data.get("otp")
-        customer_id = request.session.get("customer_id")
-        mode = "edit"
+#     try:
+#         data = request.POST
+#         otp = data.get("otp")
+#         customer_id = request.session.get("customer_id")
+#         mode = "edit"
 
-        if not customer_id:
-            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
 
-        if not otp:
-            return JsonResponse({"error": "OTP is required."}, status=400)
+#         if not otp:
+#             return JsonResponse({"error": "OTP is required."}, status=400)
 
-        customer = CustomerRegister.objects.get(id=customer_id)
-        if str(customer.otp) != otp:
-            return JsonResponse({"error": "Invalid OTP."}, status=400)
-        if not customer.is_otp_valid():
-            return JsonResponse({"error": "OTP expired."}, status=400)
+#         customer = CustomerRegister.objects.get(id=customer_id)
+#         if str(customer.otp) != otp:
+#             return JsonResponse({"error": "Invalid OTP."}, status=400)
+#         if not customer.is_otp_valid():
+#             return JsonResponse({"error": "OTP expired."}, status=400)
 
-        customer.otp = None
-        customer.changed_on = None
-        customer.save(update_fields=["otp", "changed_on"])
+#         customer.otp = None
+#         customer.changed_on = None
+#         customer.save(update_fields=["otp", "changed_on"])
 
-        key_prefix = f"{mode}_nominee_{customer_id}"
-        nominee_data = cache.get(f"{key_prefix}_data")
+#         key_prefix = f"{mode}_nominee_{customer_id}"
+#         nominee_data = cache.get(f"{key_prefix}_data")
 
-        if not nominee_data or "nominee_id" not in nominee_data:
-            return JsonResponse({"error": "Session expired or missing nominee_id."}, status=400)
+#         if not nominee_data or "nominee_id" not in nominee_data:
+#             return JsonResponse({"error": "Session expired or missing nominee_id."}, status=400)
 
-        nominee = NomineeDetails.objects.filter(id=nominee_data["nominee_id"], customer=customer).first()
-        if not nominee:
-            return JsonResponse({"error": "Nominee not found."}, status=404)
+#         nominee = NomineeDetails.objects.filter(id=nominee_data["nominee_id"], customer=customer).first()
+#         if not nominee:
+#             return JsonResponse({"error": "Nominee not found."}, status=404)
 
-        # Optional file updates
-        files_data = cache.get(f"{key_prefix}_files")
-        addr_ext = cache.get(f"{key_prefix}_addr_ext")
-        id_ext = cache.get(f"{key_prefix}_id_ext")
+#         # Optional file updates
+#         files_data = cache.get(f"{key_prefix}_files")
+#         addr_ext = cache.get(f"{key_prefix}_addr_ext")
+#         id_ext = cache.get(f"{key_prefix}_id_ext")
 
-        if files_data:
-            if "address_proof_file" in files_data:
-                address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
-                address_file.name = f"address{addr_ext}"
-                address_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
-                upload_file_to_s3(address_file, address_key)
-                nominee.address_proof_path = address_key
+#         if files_data:
+#             if "address_proof_file" in files_data:
+#                 address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
+#                 address_file.name = f"address{addr_ext}"
+#                 address_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
+#                 upload_file_to_s3(address_file, address_key)
+#                 nominee.address_proof_path = address_key
 
-            if "id_proof_file" in files_data:
-                id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
-                id_file.name = f"id{id_ext}"
-                id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
-                upload_file_to_s3(id_file, id_key)
-                nominee.id_proof_path = id_key
+#             if "id_proof_file" in files_data:
+#                 id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
+#                 id_file.name = f"id{id_ext}"
+#                 id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
+#                 upload_file_to_s3(id_file, id_key)
+#                 nominee.id_proof_path = id_key
 
-        # Update fields
-        nominee.first_name = nominee_data["first_name"]
-        nominee.last_name = nominee_data["last_name"]
-        nominee.relation = nominee_data["relation"]
-        nominee.save()
+#         # Update fields
+#         nominee.first_name = nominee_data["first_name"]
+#         nominee.last_name = nominee_data["last_name"]
+#         nominee.relation = nominee_data["relation"]
+#         nominee.save()
 
-        # Clean cache
-        for suffix in ["data", "files", "addr_ext", "id_ext"]:
-            cache.delete(f"{key_prefix}_{suffix}")
+#         # Clean cache
+#         for suffix in ["data", "files", "addr_ext", "id_ext"]:
+#             cache.delete(f"{key_prefix}_{suffix}")
 
-        return JsonResponse({"message": "Nominee updated successfully.", "nominee_id": nominee.id})
+#         return JsonResponse({"message": "Nominee updated successfully.", "nominee_id": nominee.id})
 
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-@customer_login_required
-@csrf_exempt
-def verify_and_save_nominee(request):
-    if request.method != "POST":
-        return JsonResponse({"error": "Only POST method allowed."}, status=405)
+#     except Exception as e:
+#         return JsonResponse({"error": str(e)}, status=500)
+# @customer_login_required
+# @csrf_exempt
+# def verify_and_save_nominee(request):
+#     if request.method != "POST":
+#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
 
-    try:
-        data = request.POST
-        otp = data.get("otp")
-        customer_id = request.session.get("customer_id")
-        mode = "create"
+#     try:
+#         data = request.POST
+#         otp = data.get("otp")
+#         customer_id = request.session.get("customer_id")
+#         mode = "create"
 
-        if not customer_id:
-            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-        if not otp:
-            return JsonResponse({"error": "OTP is required."}, status=400)
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+#         if not otp:
+#             return JsonResponse({"error": "OTP is required."}, status=400)
 
-        customer = CustomerRegister.objects.get(id=customer_id)
-        if str(customer.otp) != otp:
-            return JsonResponse({"error": "Invalid OTP."}, status=400)
-        if not customer.is_otp_valid():
-            return JsonResponse({"error": "OTP expired."}, status=400)
+#         customer = CustomerRegister.objects.get(id=customer_id)
+#         if str(customer.otp) != otp:
+#             return JsonResponse({"error": "Invalid OTP."}, status=400)
+#         if not customer.is_otp_valid():
+#             return JsonResponse({"error": "OTP expired."}, status=400)
 
-        customer.otp = None
-        customer.changed_on = None
-        customer.save(update_fields=["otp", "changed_on"])
+#         customer.otp = None
+#         customer.changed_on = None
+#         customer.save(update_fields=["otp", "changed_on"])
 
-        # Load cached data
-        key_prefix = f"{mode}_nominee_{customer_id}"
-        nominee_data = cache.get(f"{key_prefix}_data")
-        files_data = cache.get(f"{key_prefix}_files")
+#         # Load cached data
+#         key_prefix = f"{mode}_nominee_{customer_id}"
+#         nominee_data = cache.get(f"{key_prefix}_data")
+#         files_data = cache.get(f"{key_prefix}_files")
 
-        if not all([nominee_data, files_data]):
-            return JsonResponse({"error": "Session expired or incomplete data."}, status=400)
+#         if not all([nominee_data, files_data]):
+#             return JsonResponse({"error": "Session expired or incomplete data."}, status=400)
 
-        # Upload files
-        address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
-        address_file.name = "address_proof.jpg"
-        id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
-        id_file.name = "id_proof.jpg"
+#         # Upload files
+#         address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
+#         address_file.name = "address_proof.jpg"
+#         id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
+#         id_file.name = "id_proof.jpg"
 
-        addr_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
-        id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
-        upload_file_to_s3(address_file, addr_key)
-        upload_file_to_s3(id_file, id_key)
+#         addr_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
+#         id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
+#         upload_file_to_s3(address_file, addr_key)
+#         upload_file_to_s3(id_file, id_key)
 
-        # Check for duplicate
-        if NomineeDetails.objects.filter(
-            customer=customer,
-            first_name=nominee_data["first_name"],
-            last_name=nominee_data["last_name"],
-            relation=nominee_data["relation"],
-            nominee_status=1
-        ).exists():
-            return JsonResponse({"error": "This nominee already exists for the customer."}, status=409)
+#         # Check for duplicate
+#         if NomineeDetails.objects.filter(
+#             customer=customer,
+#             first_name=nominee_data["first_name"],
+#             last_name=nominee_data["last_name"],
+#             relation=nominee_data["relation"],
+#             nominee_status=1
+#         ).exists():
+#             return JsonResponse({"error": "This nominee already exists for the customer."}, status=409)
 
-        dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
-        admin = Admin.objects.only("id").first()
-        if not admin:
-            return JsonResponse({"error": "Admin not found."}, status=500)
+#         dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
+#         admin = Admin.objects.only("id").first()
+#         if not admin:
+#             return JsonResponse({"error": "Admin not found."}, status=500)
 
-        nominee = NomineeDetails.objects.create(
-            customer=customer,
-            first_name=nominee_data["first_name"],
-            last_name=nominee_data["last_name"],
-            relation=nominee_data["relation"],
-            dob=dob,
-            share=nominee_data["share"],
-            address_proof=nominee_data["address_proof"],
-            address_proof_path=addr_key,
-            id_proof_path=id_key,
-            admin=admin,
-            nominee_status=1
-        )
+#         nominee = NomineeDetails.objects.create(
+#             customer=customer,
+#             first_name=nominee_data["first_name"],
+#             last_name=nominee_data["last_name"],
+#             relation=nominee_data["relation"],
+#             dob=dob,
+#             share=nominee_data["share"],
+#             address_proof=nominee_data["address_proof"],
+#             address_proof_path=addr_key,
+#             id_proof_path=id_key,
+#             admin=admin,
+#             nominee_status=1
+#         )
 
-        for suffix in ["data", "files"]:
-            cache.delete(f"{key_prefix}_{suffix}")
+#         for suffix in ["data", "files"]:
+#             cache.delete(f"{key_prefix}_{suffix}")
 
-        return JsonResponse({"message": "Nominee saved successfully.", "nominee_id": nominee.id})
+#         return JsonResponse({"message": "Nominee saved successfully.", "nominee_id": nominee.id})
 
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+#     except Exception as e:
+#         return JsonResponse({"error": str(e)}, status=500)
     
 # ----------------`------------------------
 # `
@@ -2917,14 +2781,14 @@ def stage_nominees(request):
         send_bulk_sms([str(customer.mobile_no)], otp)
         cache.set(f"otp_verified_{customer_id}", False, timeout=900)
 
-        return JsonResponse({"message": "Nominees staged. OTP sent for verification."})
+        return JsonResponse({"message": "OTP sent for Nominee verification."})
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
 @customer_login_required
 @csrf_exempt
-def verify_nominee_batch_otp(request):
+def verify_nominee(request):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST allowed"}, status=405)
 
@@ -2987,18 +2851,8 @@ def save_staged_nominees(request):
             id_file = BytesIO(nominee["id_proof_file"].encode("latin1"))
             id_file.name = nominee["id_name"]
 
-            # Generate keys
-            addr_key, _, _, _ = generate_customer_file_key(addr_file, customer, "nominee_address_proof")
-            id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
-
-            # Upload
-            upload_file_to_s3(addr_file, addr_key)
-            upload_file_to_s3(id_file, id_key)
-
-            # Parse DOB
             dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
 
-            # Save to DB
             nominee_obj = NomineeDetails.objects.create(
                     customer=customer,
                     first_name=nominee_data["first_name"],
@@ -3007,31 +2861,60 @@ def save_staged_nominees(request):
                     dob=dob,
                     share=nominee_data["share"],
                     address_proof=nominee_data.get("address_proof", "Aadhar"),  # or set default
-                    address_proof_path=addr_key,
-                    # id_proof=nominee_data.get("id_proof", "PAN"),               # add this (missing earlier)
-                    id_proof_path=id_key,
                     admin=admin,
-
-                # customer=customer,
-                # first_name=nominee_data["first_name"],
-                # last_name=nominee_data["last_name"],
-                # relation=nominee_data["relation"],
-                # dob=dob,
-                # share=nominee_data["share"],
-                # address_proof=nominee_data["address_proof"],
-                # address_proof_path=addr_key,
-                # id_proof_path=id_key,
-                # admin=admin,
-                # nominee_status=1
             )
+ 
+            nominee_id = nominee_obj.id
+            nominee_name = f"{nominee_data['first_name']}{nominee_data['last_name']}".replace(" ", "").lower()
+            customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
+            folder_path = f"customerdoc/{customer.id}_{customer_name}"
+            suffix = uuid.uuid4().hex[-6:]
 
-            created_ids.append(nominee_obj.id)
+            addr_ext = os.path.splitext(addr_file.name)[1].lower()
+            id_ext = os.path.splitext(id_file.name)[1].lower()
 
-        # Clear session
+            addr_key = f"{folder_path}/nominee_address_proof_{nominee_id}_{nominee_name}_{suffix}{addr_ext}"
+            id_key = f"{folder_path}/nominee_id_proof_{nominee_id}_{nominee_name}_{suffix}{id_ext}"
+
+            # Upload to S3
+            upload_file_to_s3(addr_file, addr_key)
+            upload_file_to_s3(id_file, id_key)
+
+            # Update nominee record with paths
+            nominee_obj.address_proof_path = addr_key
+            nominee_obj.id_proof_path = id_key
+            nominee_obj.save()
+
+            created_ids.append(nominee_id)
+
         cache.delete(f"cached_nominees_{customer_id}")
         cache.delete(f"otp_verified_{customer_id}")
 
         return JsonResponse({"message": "All nominees saved successfully.", "nominee_ids": created_ids})
 
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+def receipt(request):
+    try:
+        data= json.loads(request.body)
+        customer_id= request.session.get("customer_id")
+        if not customer_id:
+            return JsonResponse({"error": "Unauthorized: Login required"}, status=403)
+        drone_order_id = data.get("drone_order_id")
+        payment = PaymentDetails.objects.get(drone_order_id=drone_order_id)
+        if not payment:
+            return JsonResponse({"error": "Payment not found"}, status=404)
+
+        context = {
+            "payment": payment,
+            "customer": payment.customer,
+            "admin": payment.admin
+        }
+
+        return render(request, 'receipt.html', context)
+
+    except PaymentDetails.DoesNotExist:
+        return JsonResponse({"error": "Payment not found"}, status=404)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)

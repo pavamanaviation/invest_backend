@@ -37,6 +37,84 @@ def get_all_models_by_role(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
+ALLOWED_ROLE_TYPES = ['Marketing Executive', 'Financial Executive']
+ALLOWED_COMPANIES = ['Pavaman Aviation', 'Pavaman Agriventure']
+
+def get_kyc_details(role):
+    if role.role_type in ALLOWED_ROLE_TYPES and role.company_name in ALLOWED_COMPANIES:
+        queryset = KYCDetails.objects.select_related('customer').all()
+        data = []
+
+        for obj in queryset:
+            record = {
+                "customer_name": f"{obj.customer.first_name} {obj.customer.last_name}",
+                "pan_name": "",
+                "pan_number": "",
+                "pan_status": obj.pan_status,
+                "pan_verify_status": "",
+                "aadhar_number": "",
+                "aadhar_status": obj.aadhar_status,
+                "aadhar_verify_status": "",
+                "bank_account_number": "",
+                "bank_ifsc_code": "",
+                "bank_name": ""
+            }
+
+            if obj.pan_status == 1 and obj.idfy_pan_status == "completed":
+                record["pan_name"] = obj.pan_name or ""
+                record["pan_number"] = obj.pan_number or ""
+                record["pan_verify_status"] = obj.idfy_pan_status or ""
+
+            if obj.aadhar_status == 1 and obj.idfy_aadhar_status == "completed":
+                record["aadhar_number"] = obj.aadhar_number or ""
+                record["aadhar_verify_status"] = obj.idfy_aadhar_status or ""
+
+            if role.role_type == "Financial Executive":
+                if obj.bank_status == 1 and obj.idfy_bank_status == "completed":
+                    record["bank_account_number"] = obj.bank_account_number or ""
+                    record["bank_ifsc_code"] = obj.ifsc_code or ""
+                    record["bank_name"] = obj.bank_name or ""
+
+            data.append(record)
+
+        return data
+    return None
+
+
+def get_customer_more_details(role):
+    if role.role_type in ALLOWED_ROLE_TYPES and role.company_name in ALLOWED_COMPANIES:
+        queryset = CustomerMoreDetails.objects.select_related('customer').filter(status=1)
+        data = []
+
+        for obj in queryset:
+            record = {
+                "customer_name": f"{obj.customer.first_name} {obj.customer.last_name}",
+                "email": obj.customer.email,
+                # "phone": obj.customer.phone_number,
+                "address": obj.address or "",
+                "district": obj.district or "",
+                "mandal": obj.mandal or "",
+                "city": obj.city or "",
+                "state": obj.state or "",
+                "country": obj.country or "",
+                "pincode": obj.pincode or "",
+                "dob": obj.dob.strftime('%Y-%m-%d') if obj.dob else "",
+                "gender": obj.gender or "",
+                "profession": obj.profession or "",
+                "designation": obj.designation or "",
+                "personal_status": obj.personal_status,
+                "selfie_path": obj.selfie_path or "",
+                "signature_path": obj.signature_path or "",
+                "selfie_status": obj.selfie_status,
+                "signature_status": obj.signature_status,
+                "created_at": obj.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+            data.append(record)
+
+        return data
+    return None
+
+
 @csrf_exempt
 def get_models_data_by_role(request):
     if request.method != 'POST':
@@ -59,56 +137,22 @@ def get_models_data_by_role(request):
             return JsonResponse({'error': f'Model "{model_name}" not recognized.'}, status=400)
 
         if model_name == 'KYCDetails':
-            if role.role_type in ['Marketing Executive', 'Financial Executive'] and role.company_name == 'Pavaman Aviation':
-                queryset = KYCDetails.objects.select_related('customer').all()
-                data = []
-
-                for obj in queryset:
-                    record = {
-                        "customer_name": f"{obj.customer.first_name} {obj.customer.last_name}",
-                        "pan_name": "",
-                        "pan_number": "",
-                        "pan_status": obj.pan_status,
-                        "pan_verify_status": "",
-                        "aadhar_number": "",
-                        "aadhar_status": obj.aadhar_status,
-                        "aadhar_verify_status": "",
-                        "bank_account_number": "",
-                        "bank_ifsc_code": "",
-                        "bank_name": ""
-                    }
-
-                    # PAN details
-                    if obj.pan_status == 1 and obj.idfy_pan_status == "completed":
-                        record["pan_name"] = obj.pan_name or ""
-                        record["pan_number"] = obj.pan_number or ""
-                        record["pan_verify_status"] = obj.idfy_pan_status or ""
-
-                    # Aadhar details
-                    if obj.aadhar_status == 1 and obj.idfy_aadhar_status == "completed":
-                        record["aadhar_number"] = obj.aadhar_number or ""
-                        record["aadhar_verify_status"] = obj.idfy_aadhar_status or ""
-
-                    # Bank details (only for Financial Executive)
-                    if role.role_type == "Financial Executive":
-                        if obj.bank_status == 1 and obj.idfy_bank_status == "completed":
-                            record["bank_account_number"] = obj.bank_account_number or ""
-                            record["bank_ifsc_code"] = obj.ifsc_code or ""
-                            record["bank_name"] = obj.bank_name or ""
-
-                    data.append(record)
-
-                return JsonResponse({
-                    'model': model_name,
-                    'label': MODEL_LABELS[model_name],
-                    'data': data
-                }, status=200)
-            else:
-                return JsonResponse({
-                    'error': 'Permission denied: Role type or company not allowed to view this data.'
-                }, status=403)
+            result = get_kyc_details(role)
+        elif model_name == 'CustomerMoreDetails':
+            result = get_customer_more_details(role)
         else:
             return JsonResponse({'error': 'This model is not handled yet.'}, status=400)
+
+        if result is not None:
+            return JsonResponse({
+                'model': model_name,
+                'label': MODEL_LABELS[model_name],
+                'data': result
+            }, status=200)
+        else:
+            return JsonResponse({
+                'error': 'Permission denied: Role type or company not allowed to view this data.'
+            }, status=403)
 
     except json.JSONDecodeError:
         return JsonResponse({'error': 'Invalid JSON format'}, status=400)

@@ -13,6 +13,22 @@ class Admin(models.Model):
     status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
     def __str__(self):
         return self.name
+    
+
+class CompanyDroneModelInfo(models.Model):
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
+    company_name = models.CharField(max_length=150, default='Pavaman Aviation Private Limited')
+    model_name = models.CharField(max_length=100, default='TEJAS')
+    serial_number = models.CharField(max_length=100)
+    uin_number = models.CharField(max_length=100)
+    date_of_model = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.IntegerField(default=1)
+    assign_status = models.IntegerField(default=0)#if once assign for agreement update as 1
+
+    def __str__(self):
+        return f"{self.model_name} - {self.serial_number}"
+
 
 class Role(models.Model):
     first_name = models.CharField(max_length=50)

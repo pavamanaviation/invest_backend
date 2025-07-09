@@ -23,9 +23,10 @@ verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_detai
 # from invest_app.views import check_indian_time 
 from invest_app.customer_views import (create_drone_installment_order, customer_register, get_pan_verification_status, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
 customer_login,verify_pan_document,get_pan_source_verification_status,get_aadhar_verification_status,
-bank_account_verification_view,customer_more_details,customer_profile_view,
+bank_account_verification_view,customer_more_details,customer_profile_view,create_drone_installment_order,
 upload_pdf_document,verify_and_save_nominee,create_drone_order,razorpay_callback,payment_status_check,
-initiate_nominee_registration,preview_customer_details,verify_and_update_nominee
+initiate_nominee_registration,preview_customer_details,verify_and_update_nominee,completed_status,
+stage_nominees, verify_nominee_batch_otp, save_staged_nominees,
 )
 
 from invest_app.role_views import (get_all_models_by_role,get_models_data_by_role)
@@ -70,21 +71,25 @@ urlpatterns = [
     path('upload-pdf-document', upload_pdf_document, name='upload_pdf_document'),
     path('add-nominee', verify_and_save_nominee, name='verify_and_save_nominee'),
     path('initiate-nominee',initiate_nominee_registration, name='initiate_nominee_registration'),
-
-    # path('nominee-details', verify_and_save_nominee, name='verify_and_save_nominee'),
-    # path('nominee-registration',initiate_nominee_registration, name='initiate_nominee_registration'),
     path('edit-nominee',verify_and_update_nominee, name='verify_and_update_nominee'),
+
+
+    path('nominee-stage', stage_nominees, name='stage_nominees'),
+    path('nominee-verify', verify_nominee_batch_otp, name='verify_nominee_batch_otp'),
+    path('nominee-save', save_staged_nominees, name='save_staged_nominees'),
+
 
     path('preview-customer-details',preview_customer_details,name='preview_customer_details'),
     
     path('create-drone-order', create_drone_order, name='create_drone_order'),
     path('razorpay-callback', razorpay_callback, name='razorpay_callback'),
-    path('create_drone_installment_order', create_drone_installment_order, name='create_drone_installment_order'),
+    path('create-drone-installment-order', create_drone_installment_order, name='create_drone_installment_order'),
     path('payment-status-check', payment_status_check, name='payment_status_check'),
+    path('completed-status', completed_status, name='completed_status'),
 
     #role urls
     path('get-models-names',get_all_models_by_role,name='get_all_models_by_role'),
-    path('get-details',get_models_data_by_role,name='get_models_data_by_role')
+    path('get-details',get_models_data_by_role,name='get_models_data_by_role'),
 
     
 ]

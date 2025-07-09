@@ -42,3 +42,5 @@ from django.db.models import Q
 
 from django.contrib.auth.decorators import user_passes_test
 from django.utils.timezone import now as timezone_now
+import json, random, string
+from django.db.models import Max

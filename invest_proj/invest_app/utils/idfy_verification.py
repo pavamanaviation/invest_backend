@@ -90,7 +90,7 @@ def submit_idfy_aadhar_ocr(file_url):
         }
     }
     response = requests.post(
-        f"{settings.IDFY_BASE_URL}/tasks/async/extract/ind_aadhar",
+        f"{settings.IDFY_BASE_URL}/tasks/async/extract/ind_aadhaar",
         headers=headers,
         json=payload
     )

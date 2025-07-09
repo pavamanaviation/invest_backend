@@ -147,15 +147,17 @@ class NomineeDetails(models.Model):
     share=models.FloatField(default=0.0)
     def __str__(self):
         return f"Nominee for {self.customer.email}" if self.customer else "Nominee Details"
+    
 class PaymentDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
     admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
     role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)    
     razorpay_order_id = models.CharField(max_length=100)
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
-    payment_mode = models.CharField(max_length=40,default='card')
+    payment_mode = models.CharField(max_length=40,default='unknown')
     part_number = models.IntegerField(default=1)  # 1, 2, or 3
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    total_amount = models.DecimalField(max_digits=50, decimal_places=2,default=0.0)
+    amount = models.DecimalField(max_digits=50, decimal_places=2,default=0.0)
     quantity= models.IntegerField(default=1)
     drone_order_id = models.CharField(max_length=50, null=True, blank=True) 
     payment_type = models.CharField(max_length=20, default='unknown')  # 'installment' or 'full'

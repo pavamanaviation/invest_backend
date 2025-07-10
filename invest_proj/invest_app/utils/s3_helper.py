@@ -67,6 +67,35 @@ def delete_all_kyc_files(customer_id, first_name, last_name, doc_type):
     except Exception as e:
         print(f"Error deleting {doc_type.upper()} files: {str(e)}")
 
+def get_next_folder_and_filename():
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_S3_REGION_NAME
+    )
+
+    base_folder = "drone_uploads/"
+    existing_objects = s3.list_objects_v2(
+        Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+        Prefix=base_folder
+    ).get("Contents", [])
+
+    folder_nums = []
+    for obj in existing_objects:
+        parts = obj['Key'].split("/")
+        if len(parts) > 1:
+            folder = parts[1]
+            if folder.startswith("pavaman_drones_") and folder.split("_")[-1].isdigit():
+                folder_nums.append(int(folder.split("_")[-1]))
+
+    next_num = max(folder_nums) + 1 if folder_nums else 1
+    folder_name = f"pavaman_drones_{next_num:04d}"
+    file_name = f"drone_models_{next_num:04d}.xlsx"
+
+    return folder_name, file_name
+
+
 # def generate_presigned_url(file_key, expires_in=300):
 #     s3 = boto3.client(
 #         's3',

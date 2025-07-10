@@ -1,8 +1,11 @@
 from invest_app.utils.shared_imports import *
-from invest_app.utils.s3_helper import generate_presigned_url
+from invest_app.utils.s3_helper import upload_to_s3, generate_presigned_url, get_next_folder_and_filename
+from django.utils.dateparse import parse_date
 from .models import (Admin, CustomerRegister, KYCDetails, CustomerMoreDetails,
-                      NomineeDetails, PaymentDetails, Permission, Role)
-
+                      NomineeDetails, PaymentDetails, Permission, Role,CompanyDroneModelInfo)
+import pandas as pd
+import re
+import tempfile
 MODEL_LABELS = {
                 "CustomerRegister": "Customer Registration Details",
                 "KYCDetails": "KYC Details",
@@ -1049,3 +1052,172 @@ def admin_customer_details(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
+def generate_presigned_url(file_key, expires_in=300):
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_S3_REGION_NAME
+    )
+    mime_type, _ = mimetypes.guess_type(file_key)
+    if not mime_type:
+        mime_type = 'application/octet-stream'
+
+    return s3.generate_presigned_url(
+        ClientMethod='get_object',
+        Params={
+            'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+            'Key': file_key,
+            'ResponseContentDisposition': 'inline',
+            'ResponseContentType': mime_type
+        },
+        ExpiresIn=expires_in
+    )
+
+@csrf_exempt
+def upload_drone_models(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+    try:
+        file = request.FILES.get('file')
+        admin_id = request.POST.get('admin_id')
+
+        if not file or not admin_id:
+            return JsonResponse({"error": "Missing file or admin_id"}, status=400)
+        
+        try:
+            admin = Admin.objects.get(id=admin_id, status=1)
+        except Admin.DoesNotExist:
+            return JsonResponse({'error': 'Admin not found'}, status=404)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+            for chunk in file.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+
+        try:
+            df = pd.read_excel(tmp_path)
+        except ImportError:
+            return JsonResponse({"error": "Missing optional dependency 'openpyxl'. Use pip install openpyxl."})
+        except Exception as e:
+            return JsonResponse({"error": f"Excel Read Error: {str(e)}"})
+
+        folder_name, file_name = get_next_folder_and_filename()
+        file_key = f"drone_uploads/{folder_name}/{file_name}"
+
+        try:
+            with open(tmp_path, 'rb') as f:
+                upload_to_s3(f, file_key)
+        except Exception as e:
+            return JsonResponse({"error": f"S3 Upload Error: {str(e)}"})
+
+        s3_url = f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.{settings.AWS_S3_REGION_NAME}.amazonaws.com/{file_key}"
+
+        success_count = 0
+        errors = []
+        duplicate_serials = []
+        duplicate_uins = []
+
+        for index, row in df.iterrows():
+            try:
+                company_name = str(row.get('Company Name')).strip()
+                model_name = str(row.get('Model Name')).strip()
+                serial_number = str(row.get('Serial Number')).strip()
+                uin_number = str(row.get('Uin')).strip()
+                raw_date = row.get('Date of Model')
+
+                if pd.isnull(raw_date):
+                    raise ValueError("Date of Model is missing.")
+
+                if isinstance(raw_date, str):
+                    try:
+                        date_of_model = datetime.strptime(raw_date, '%d-%m-%Y').date()
+                    except ValueError:
+                        date_of_model = datetime.strptime(raw_date, '%Y-%m-%d').date()
+                else:
+                    date_of_model = pd.to_datetime(raw_date).date()
+
+                is_duplicate = False
+                if CompanyDroneModelInfo.objects.filter(serial_number=serial_number).exists():
+                    duplicate_serials.append(serial_number)
+                    is_duplicate = True
+
+                if CompanyDroneModelInfo.objects.filter(uin_number=uin_number).exists():
+                    duplicate_uins.append(uin_number)
+                    is_duplicate = True
+
+                if is_duplicate:
+                    errors.append(f"Row {index + 2}: Duplicate serial or UIN number")
+                    continue
+
+                CompanyDroneModelInfo.objects.create(
+                    admin_id=admin.id,
+                    company_name=company_name,
+                    model_name=model_name,
+                    serial_number=serial_number,
+                    uin_number=uin_number,
+                    date_of_model=date_of_model
+                )
+                success_count += 1
+
+            except Exception as e:
+                errors.append(f"Row {index + 2}: {str(e)}")
+
+        if success_count > 0:
+            response = {
+                "message": f"{success_count} drone model(s) uploaded.",
+                "s3_file_url": s3_url
+            }
+
+            if duplicate_serials or duplicate_uins:
+                response["warning"] = "Some models already exist. Please try with different Serial Numbers and UINs."
+                response["duplicate_serial_numbers"] = list(set(duplicate_serials))
+                response["duplicate_uin_numbers"] = list(set(duplicate_uins))
+                response["errors"] = errors
+
+            return JsonResponse(response)
+
+        else:
+            return JsonResponse({
+                "error": "All rows failed to upload. Possible duplicates or data issues.",
+                "duplicate_serial_numbers": list(set(duplicate_serials)),
+                "duplicate_uin_numbers": list(set(duplicate_uins)),
+                "errors": errors
+            }, status=400)
+
+    except Exception as ex:
+        return JsonResponse({"error": f"Unexpected error: {str(ex)}"}, status=500)
+@csrf_exempt
+def view_drone_models_by_admin(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        admin_id = data.get('admin_id')
+
+        if not admin_id:
+            return JsonResponse({"error": "Missing admin_id"}, status=400)
+
+        drone_models = CompanyDroneModelInfo.objects.filter(admin_id=admin_id)
+
+        if not drone_models.exists():
+            return JsonResponse({"message": "No drone models found for this admin."})
+
+        data = []
+        for model in drone_models:
+            data.append({
+                "company_name": model.company_name,
+                "model_name": model.model_name,
+                "serial_number": model.serial_number,
+                "uin_number": model.uin_number,
+                "date_of_model": model.date_of_model.strftime('%d-%m-%Y'),
+                "assign_drone_status":model.assign_status
+            })
+
+        return JsonResponse({"drone_models": data}, status=200)
+
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)

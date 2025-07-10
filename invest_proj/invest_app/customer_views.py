@@ -15,6 +15,11 @@ from .utils.idfy_verification import (check_idfy_status_by_request_id,
 submit_idfy_aadhar_ocr, submit_idfy_pan_ocr, check_idfy_task_status,
  submit_idfy_pan_verification)
 
+from django.template.loader import render_to_string
+from weasyprint import HTML
+from io import BytesIO
+from django.core.mail import EmailMessage
+
 # --------------
 def get_indian_time():
     india_tz = pytz.timezone('Asia/Kolkata')
@@ -2275,8 +2280,8 @@ def payment_status_check(request):
             first_payment = all_parts.order_by('created_at').first()
             start_date = first_payment.created_at.date() if first_payment else timezone.now().date()
             today = timezone.now().date()
-            days_left = max(0, 90 - (today - start_date).days)
-
+            days_left = max(0, 2 - (today - start_date).days)
+  
         # Final paid status check
         paid = total_paid >= total_amount and total_amount > 0
 
@@ -2533,7 +2538,7 @@ def create_drone_installment_order(request):
         first_payment = previous_payments.order_by('created_at').first()
         start_date = first_payment.created_at.date() if first_payment else timezone.now().date()
         today = timezone.now().date()
-        days_left = max(0, 90 - (today - start_date).days)
+        days_left = max(0, 2 - (today - start_date).days)
 
         return JsonResponse({
             'message': 'Installment order created.',
@@ -2591,6 +2596,18 @@ def razorpay_callback(request):
                 print(f"🧾 Type: {payment.payment_type} | Part: {payment.part_number} | Drone Order: {payment.drone_order_id}")
 
                 if payment.payment_type == 'installment':
+                    kyc = KYCDetails.objects.filter(customer=payment.customer).first()
+
+                    context = {
+                        "payment_type": payment.payment_type,
+                        "part_number": payment.part_number,
+                        "full_name": kyc.pan_name if kyc else "Customer",
+                        "payment_mode": payment.payment_mode,
+                        "amount": payment.amount,
+                    }
+                    pdf_file = generate_receipt_pdf(context)
+                    send_receipt_email(payment.customer, payment,kyc, pdf_file)
+                    
                     all_parts = PaymentDetails.objects.filter(
                         customer=payment.customer,
                         drone_order_id=payment.drone_order_id,
@@ -2632,6 +2649,104 @@ def razorpay_callback(request):
     except Exception as e:
         print("Webhook Error:", str(e))
         return JsonResponse({'error': str(e)}, status=500)
+
+def generate_receipt_pdf(context):
+    html_string = render_to_string("receipt_pdf.html", context)
+    pdf_file = BytesIO()
+    HTML(string=html_string).write_pdf(target=pdf_file)
+    pdf_file.seek(0)
+    return pdf_file
+
+def send_receipt_email(customer, payment,kyc, pdf_file):
+    subject = "Installment Receipt from Pavaman Aviation"
+    logo_url = f"{settings.AWS_S3_BUCKET_URL}/aviation-logo.png"
+
+    text_content = f"""
+    Dear {kyc.pan_name},
+
+    Thank you for your installment payment (Part {payment.part_number}).
+
+    Amount Paid: ₹{payment.amount}
+    Paid On: {payment.created_at.strftime('%d %b %Y, %I:%M %p')}
+
+    Your receipt is attached with this email.
+    """
+
+    html_content = f"""
+    <html>
+    <head>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap');
+            @media only screen and (max-width: 600px) {{
+                .container {{
+                    width: 90% !important;
+                    padding: 20px !important;
+                }}
+                .logo {{
+                    max-width: 180px !important;
+                    height: auto !important;
+                }}
+            }}
+        </style>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: 'Inter', sans-serif; background-color: #f5f5f5;">
+        <div class="container" style="margin: 40px auto; background-color: #ffffff; border-radius: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); padding: 40px 30px; max-width: 480px; text-align: left;">
+            <div style="text-align: center;">
+                <img src="{logo_url}" alt="Pavaman Logo" class="logo" style="max-width: 280px; height: auto; margin-bottom: 20px;" />
+                <h2 style="margin-top: 0; color: #222;">Installment Receipt</h2>
+            </div>
+
+            <p style="margin: 0 0 10px; color: #555; font-size: 15px;">
+                Dear {kyc.pan_name},
+            </p>
+
+            <p style="color: #555; font-size: 15px; line-height: 1.6;">
+                Thank you for your installment payment. Your receipt is attached below.
+            </p>
+
+            <table style="width: 100%; margin-top: 20px; border-collapse: collapse;">
+               
+                <tr>
+                    <td style="font-weight: bold; padding: 8px 0;">Installment No:</td>
+                    <td>{payment.part_number}</td>
+                </tr>
+                <tr>
+                    <td style="font-weight: bold; padding: 8px 0;">Amount Paid:</td>
+                    <td>₹{payment.amount}</td>
+                </tr>
+                <tr>
+                    <td style="font-weight: bold; padding: 8px 0;">Paid On:</td>
+                    <td>{payment.created_at.strftime('%d %b %Y, %I:%M %p')}</td>
+                </tr>
+            </table>
+
+            <p style="color: #888; font-size: 13px; margin-top: 30px;">
+                If you have any questions, please reach out to us at support@pavaman.com.
+            </p>
+
+            <p style="margin-top: 20px; font-size: 13px; color: #888;">
+                Disclaimer: This is an automated email. Please do not reply.
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+    email_message = EmailMultiAlternatives(
+        subject,
+        text_content,
+        settings.DEFAULT_FROM_EMAIL,
+        [customer.email]
+    )
+    email_message.attach_alternative(html_content, "text/html")
+    email_message.attach(
+        f"Receipt_{payment.drone_order_id}_Part{payment.part_number}.pdf",
+        pdf_file.read(),
+        'application/pdf'
+    )
+    email_message.send()
+
+
 
 # @csrf_exempt
 # def razorpay_callback(request):
@@ -2894,3 +3009,4 @@ def save_staged_nominees(request):
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+

@@ -105,7 +105,7 @@ class KYCDetails(models.Model):
     aadhar_task_id = models.CharField(max_length=100, blank=True, null=True)
     idfy_aadhar_status = models.CharField(max_length=10, null=True, blank=True)
     aadhar_path = models.CharField(max_length=250, null=True, blank=True)  # Path to the Aadhar document
-
+    aadhar_gender= models.CharField(max_length=10, null=True, blank=True)  #
     bank_account_number = models.CharField(max_length=20, unique=True, null=True, blank=True)
     bank_name = models.CharField(max_length=50, null=True, blank=True)
     ifsc_code = models.CharField(max_length=11, null=True, blank=True)
@@ -163,15 +163,20 @@ class NomineeDetails(models.Model):
     share=models.FloatField(default=0.0)
     def __str__(self):
         return f"Nominee for {self.customer.email}" if self.customer else "Nominee Details"
+    
 class PaymentDetails(models.Model):
     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
     admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
     role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)    
     razorpay_order_id = models.CharField(max_length=100)
     razorpay_payment_id = models.CharField(max_length=100, blank=True, null=True)
-    payment_mode = models.CharField(max_length=40,default='card')
+    payment_mode = models.CharField(max_length=40,default='unknown')
     part_number = models.IntegerField(default=1)  # 1, 2, or 3
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    total_amount = models.DecimalField(max_digits=50, decimal_places=2,default=0.0)
+    amount = models.DecimalField(max_digits=50, decimal_places=2,default=0.0)
+    quantity= models.IntegerField(default=1)
+    drone_order_id = models.CharField(max_length=50, null=True, blank=True) 
+    payment_type = models.CharField(max_length=20, default='unknown')  # 'installment' or 'full'
     drone_payment_status = models.CharField(max_length=20, default='created')  # created, paid, failed
     created_at = models.DateTimeField(auto_now_add=True)
     payment_status= models.IntegerField(default=0)

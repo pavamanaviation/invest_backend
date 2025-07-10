@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.urls import path
 
 from invest_app.views import (add_role, view_kyc_doc,view_roles,delete_role,update_role,get_models_by_admin,assign_role_permissions,view_role_permissions_by_admin,
-verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details,)
+verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details,upload_drone_models,view_drone_models_by_admin)
 
 # from invest_app.views import check_indian_time 
 from invest_app.customer_views import (create_drone_installment_order, customer_register, get_pan_verification_status, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
@@ -40,6 +40,8 @@ urlpatterns = [
     path('view-roles', view_roles,name='view_roles'), 
     path('delete-role', delete_role, name='delete_role'),
     path('update-role', update_role, name='update_role'),
+    path('upload-drone-models',upload_drone_models,name='upload_drone_models'),
+    path('view-drone-models',view_drone_models_by_admin,name='view_drone_models_by_admin'),
 
 
     path('admin-customer-details',admin_customer_details,name='admin_customer_details'),

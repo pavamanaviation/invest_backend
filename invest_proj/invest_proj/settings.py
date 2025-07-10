@@ -506,3 +506,6 @@ SESSION_COOKIE_SECURE = False      # Only send session cookies over HTTPS
 SESSION_COOKIE_HTTPONLY = True    # Prevent JavaScript access to the session cookie
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True  # Optional: logout on browser close
 
+
+# SESSION_COOKIE_AGE = 60 
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'

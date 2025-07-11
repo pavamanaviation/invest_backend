@@ -680,8 +680,8 @@ def get_location_by_pincode(pincode):
     except:
         pass
     return {}
-
-# @customer_login_required 
+# ---------------------------------
+# @customer_login_required
 # @csrf_exempt
 # def customer_more_details(request):
 #     if request.method != 'POST':
@@ -690,101 +690,76 @@ def get_location_by_pincode(pincode):
 #     try:
 #         data = json.loads(request.body)
 #         customer_id = request.session.get('customer_id')
-
 #         if not customer_id:
 #             return JsonResponse({"error": "Unauthorized: Login required."}, status=403)
-#         customer = CustomerRegister.objects.only(
-#             "id", "first_name", "last_name", "email", "mobile_no",
-#             "register_status", "account_status"
-#         ).filter(id=customer_id).first()
 
+#         customer = CustomerRegister.objects.filter(id=customer_id).first()
 #         if not customer:
 #             return JsonResponse({"error": "Customer not found."}, status=404)
 
-#         more = CustomerMoreDetails.objects.filter(customer=customer).first()
-
-#         if more and more.personal_status == 1:
+#         existing = CustomerMoreDetails.objects.filter(customer=customer).first()
+#         if existing and existing.personal_status == 1:
 #             return JsonResponse({
 #                 "action": "view_only",
-#                 "message": "Personal details already submitted. Please proceed for next.",
+#                 "message": "Personal details already submitted.",
 #                 "customer_readonly_info": {
 #                     "customer_id": customer.id,
 #                     "first_name": customer.first_name,
 #                     "last_name": customer.last_name,
 #                     "email": customer.email,
-#                     "personal_status": more.personal_status
+#                     "personal_status": existing.personal_status
 #                 }
-#             }, status=200)
+#             })
 
-#         # Allow update if not yet submitted
-#         mobile_no = data.get('mobile_no')
-#         email = data.get('email')
-#         # dob_str = data.get('dob')
-#         # gender = data.get('gender')
-#         address = data.get('address')
-#         pincode = data.get('pincode')
-#         designation = data.get('designation')
-#         profession = data.get('profession')
+#         required = ["mobile_no", "email", "address", "pincode", "designation", "profession","gender","dob","fullname",]
+#         for field in required:
+#             if not data.get(field):
+#                 return JsonResponse({"error": f"{field} is required."}, status=400)
 
-#         if not (mobile_no and email):
-#             return JsonResponse({"error": "Mobile number and email are required."}, status=400)
+#         location = get_location_by_pincode(data["pincode"]) or {}
 
-#         # Safe date parsing
-#         # dob = parsedate(dob_str) if dob_str else None
-
-#         # Get location info
-#         location = get_location_by_pincode(pincode) or {}
-
-#         if more:
-#             more = CustomerMoreDetails.objects.create(
-#                 customer=customer,
-#                 # dob=dob,
-#                 # gender=gender,
-#                 address=address,
-#                 pincode=pincode,
-#                 designation=designation,
-#                 profession=profession,
-#                 district=location.get("district", ""),
-#                 state=location.get("state", ""),
-#                 country=location.get("country", ""),
-#                 city=location.get("city", ""),
-#                 mandal=location.get("block", ""),
-#                 personal_status=1
-#             )
-
-#         customer_details = {
-#             "customer_id": customer.id,
-#             "first_name": customer.first_name,
-#             "last_name": customer.last_name,
-#             "email": customer.email,
-#             "mobile_no": customer.mobile_no,
-#             "register_status": customer.register_status,
-#             "account_status": customer.account_status,
-#             # "dob": more.dob,
-#             # "gender": more.gender,
-#             "address": more.address,
-#             "pincode": more.pincode,
-#             "designation": more.designation,
-#             "profession": more.profession,
-#             "district": more.district,
-#             "state": more.state,
-#             "country": more.country,
-#             "city": more.city,
-#             "mandal": more.mandal,
-#             "personal_status": more.personal_status,
-#         }
+#         more = CustomerMoreDetails.objects.create(
+#             customer=customer,
+#             address=data["address"],
+#             pincode=data["pincode"],
+#             designation=data["designation"],
+#             profession=data["profession"],
+#             district=location.get("district", ""),
+#             state=location.get("state", ""),
+#             country=location.get("country", ""),
+#             city=location.get("city", ""),
+#             mandal=location.get("block", ""),
+#             personal_status=1
+#         )
 
 #         return JsonResponse({
 #             "message": "Customer details saved successfully.",
 #             "action": "add_details",
-#             "customer_details": customer_details,
-#         }, status=200)
+#             "customer_details": {
+#                 "customer_id": customer.id,
+#                 "first_name": customer.first_name,
+#                 "last_name": customer.last_name,
+#                 "email": customer.email,
+#                 "mobile_no": customer.mobile_no,
+#                 "address": more.address,
+#                 "pincode": more.pincode,
+#                 "designation": more.designation,
+#                 "profession": more.profession,
+#                 "district": more.district,
+#                 "state": more.state,
+#                 "country": more.country,
+#                 "city": more.city,
+#                 "mandal": more.mandal,
+#                 "personal_status": more.personal_status,
+#             }
+#         })
 
 #     except json.JSONDecodeError:
 #         return JsonResponse({"error": "Invalid JSON."}, status=400)
 #     except Exception as e:
 #         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
-@customer_login_required
+
+# -----------------------------------------
 @csrf_exempt
 def customer_more_details(request):
     if request.method != 'POST':
@@ -792,7 +767,8 @@ def customer_more_details(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = request.session.get('customer_id')
+        customer_id = data.get('customer_id')
+
         if not customer_id:
             return JsonResponse({"error": "Unauthorized: Login required."}, status=403)
 
@@ -800,6 +776,7 @@ def customer_more_details(request):
         if not customer:
             return JsonResponse({"error": "Customer not found."}, status=404)
 
+        # Prevent saving again if already submitted
         existing = CustomerMoreDetails.objects.filter(customer=customer).first()
         if existing and existing.personal_status == 1:
             return JsonResponse({
@@ -814,25 +791,71 @@ def customer_more_details(request):
                 }
             })
 
-        required = ["mobile_no", "email", "address", "pincode", "designation", "profession","gender","dob","fullname",]
-        for field in required:
-            if not data.get(field):
+        # Required fields check
+        required_fields = ["designation", "profession", "address", "pincode", "same_address"]
+        for field in required_fields:
+            if field not in data:
                 return JsonResponse({"error": f"{field} is required."}, status=400)
 
-        location = get_location_by_pincode(data["pincode"]) or {}
+        same_address = data.get("same_address", False)
 
+        if not same_address:
+            # Require both present and permanent address
+            if not data.get("present_address") or not data.get("present_pincode"):
+                return JsonResponse({"error": "present_address and present_pincode are required."}, status=400)
+            if not data.get("address") or not data.get("pincode"):
+                return JsonResponse({"error": "address and pincode are required when addresses are different."}, status=400)
+
+            present_location = get_location_by_pincode(data["present_pincode"]) or {}
+            permanent_location = get_location_by_pincode(data["pincode"]) or {}
+
+            address_data = {
+                "present_address": data["present_address"],
+                "present_pincode": data["present_pincode"],
+                "present_city": present_location.get("city", ""),
+                "present_district": present_location.get("district", ""),
+                "present_state": present_location.get("state", ""),
+                "present_country": present_location.get("country", ""),
+                "present_mandal": present_location.get("block", ""),
+
+                "address": data["address"],
+                "pincode": data["pincode"],
+                "city": permanent_location.get("city", ""),
+                "district": permanent_location.get("district", ""),
+                "state": permanent_location.get("state", ""),
+                "country": permanent_location.get("country", ""),
+                "mandal": permanent_location.get("block", ""),
+            }
+        else:
+            # Use permanent address for both if same_address = True
+            location = get_location_by_pincode(data["pincode"]) or {}
+
+            address_data = {
+                "present_address": data["address"],
+                "present_pincode": data["pincode"],
+                "present_city": location.get("city", ""),
+                "present_district": location.get("district", ""),
+                "present_state": location.get("state", ""),
+                "present_country": location.get("country", ""),
+                "present_mandal": location.get("block", ""),
+
+                "address": data["address"],
+                "pincode": data["pincode"],
+                "city": location.get("city", ""),
+                "district": location.get("district", ""),
+                "state": location.get("state", ""),
+                "country": location.get("country", ""),
+                "mandal": location.get("block", "")
+            }
+
+        # Save to DB
         more = CustomerMoreDetails.objects.create(
             customer=customer,
-            address=data["address"],
-            pincode=data["pincode"],
+            same_address=same_address,
             designation=data["designation"],
             profession=data["profession"],
-            district=location.get("district", ""),
-            state=location.get("state", ""),
-            country=location.get("country", ""),
-            city=location.get("city", ""),
-            mandal=location.get("block", ""),
-            personal_status=1
+            personal_status=1,
+            **address_data
         )
 
         return JsonResponse({
@@ -843,27 +866,26 @@ def customer_more_details(request):
                 "first_name": customer.first_name,
                 "last_name": customer.last_name,
                 "email": customer.email,
-                "mobile_no": customer.mobile_no,
-                "address": more.address,
-                "pincode": more.pincode,
-                "designation": more.designation,
-                "profession": more.profession,
-                "district": more.district,
-                "state": more.state,
-                "country": more.country,
+                "present_address": more.present_address,
+                "permanent_address": more.address,
+                "same_address": more.same_address,
+                "present_city": more.present_city,
                 "city": more.city,
-                "mandal": more.mandal,
-                "personal_status": more.personal_status,
+                "profession": more.profession,
+                "designation": more.designation,
+                "state": more.state,
+                "present_state": more.present_state,
+                "country": more.country,
+                "present_country": more.present_country,
+                "pincode": more.pincode,
+                "present_pincode": more.present_pincode
             }
         })
 
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
-        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
-
-# -----------------------------------------
-
+        return JsonResponse({"error": f"Unexpected error: '{str(e)}'"}, status=500)
 
 @customer_login_required
 @csrf_exempt

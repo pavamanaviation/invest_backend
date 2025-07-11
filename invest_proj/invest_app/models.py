@@ -14,7 +14,6 @@ class Admin(models.Model):
     def __str__(self):
         return self.name
     
-
 class CompanyDroneModelInfo(models.Model):
     admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
     company_name = models.CharField(max_length=150, default='Pavaman Aviation Private Limited')
@@ -131,6 +130,16 @@ class CustomerMoreDetails(models.Model):
     country = models.CharField(max_length=50, null=True, blank=True)
     pincode = models.CharField(max_length=10, null=True, blank=True)
     
+    present_address = models.TextField(null=True, blank=True)
+    present_district = models.CharField(max_length=50, null=True, blank=True)
+    present_mandal = models.CharField(max_length=50, null=True, blank=True)
+    present_city = models.CharField(max_length=50, null=True, blank=True)
+    present_state = models.CharField(max_length=50, null=True, blank=True)
+    present_country = models.CharField(max_length=50, null=True, blank=True)
+    present_pincode = models.CharField(max_length=10, null=True, blank=True)
+    same_address = models.BooleanField(default=False)  # True if present address is same as permanent address
+    
+
     dob = models.DateField(null=True, blank  =True)
     gender = models.CharField(max_length=10, null=True, blank=True)
     profession = models.CharField(max_length=50, null=True, blank=True)

@@ -509,3 +509,17 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = True  # Optional: logout on browser close
 
 # SESSION_COOKIE_AGE = 60 
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+
+# settings.py
+CELERY_BROKER_URL = 'redis://localhost:6379/0'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'reconcile-every-15-mins': {
+        'task': 'invest_app.tasks.reconcile_lost_payments',
+        'schedule': crontab(minute='*/15'),
+    }
+}

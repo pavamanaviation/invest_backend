@@ -1,7 +1,11 @@
+
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-  <meta charset="utf-8">
+  <meta charset="UTF-8" />
+  <title>Installment Receipt</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     @page {
       size: A4;
@@ -9,55 +13,153 @@
     }
 
     body {
-      font-family: 'Arial', sans-serif;
+      font-family: 'Inter', sans-serif;
+      background-color: #f9f9f9;
       color: #333;
+    }
+
+    .container {
+      max-width: 700px;
+      margin: auto;
+      background: #fff;
+      padding: 40px;
+      border: 1px solid #ddd;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     }
 
     .header {
       text-align: center;
-      font-size: 24px;
-      margin-bottom: 20px;
-      color: #0a58ca;
+      margin-bottom: 30px;
     }
 
-    .info-table {
+    .logo {
+      width: 120px;
+      margin-bottom: 10px;
+    }
+
+    .title {
+      font-size: 26px;
+      font-weight: bold;
+      color: #3A3A98;
+
+    }
+
+    .content {
+      margin-top: 30px;
+    }
+
+    .greeting {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    .thank-you {
+      font-size: 14px;
+      margin-bottom: 25px;
+    }
+
+    .receipt-table {
       width: 100%;
       border-collapse: collapse;
       margin-bottom: 30px;
     }
 
-    .info-table th,
-    .info-table td {
-      border: 1px solid #ccc;
-      padding: 10px;
+    .receipt-table th,
+    .receipt-table td {
+      border: 1px solid #ddd;
+      padding: 12px 15px;
       font-size: 14px;
     }
 
-    .info-table th {
-      background-color: #f1f1f1;
-      text-align: left;
+    .receipt-table th {
+      background-color: #f0f4ff;
+      color: #3A3A98;
       width: 40%;
+      text-align: left;
+    }
+
+    .signature-section {
+      margin-top: 40px;
+      text-align: right;
+    }
+
+    .signature-label {
+      font-size: 14px;
+      margin-bottom: 5px;
+    }
+
+    .signature-img {
+      height: 60px;
     }
 
     .footer {
-      margin-top: 50px;
-      text-align: center;
       font-size: 12px;
-      color: #888;
+      text-align: center;
+      color: #777;
+      margin-top: 40px;
     }
   </style>
 </head>
+
 <body>
+  <div class="container">
+    <div class="header">
+      <img src="{{ settings.AWS_S3_BUCKET_URL }}/Pavaman_Logo.png" alt="Pavaman Logo" class="logo" />
+      <div class="title">Installment Receipt</div>
+    </div>
 
-  <div class="header">Drone Purchase Receipt</div>
+    <div class="content">
 
-  <table class="info-table">
-    <tr><th>Customer Name</th><td>{{full_name }}</td></tr>
-    <tr><th>Paid Amount</th><td>₹{{ payment.amount }}</td></tr>
-    <tr><th>Paid On</th><td>{{ payment.created_at|date:"d M Y, H:i A" }}</td></tr>
-  </table>
 
-  <div class="footer">This receipt is auto-generated and valid without signature.</div>
+      <table class="receipt-table">
+        <tr>
+          <th>Name:</th>
+          <td>{{ pan_name}}</td>
+        </tr>
+        <tr>
 
+
+          <th>Installment No:</th>
+          <td>{{ installment_number }}</td>
+        </tr>
+        <tr>
+          <th>Amount Paid:</th>
+          <td>₹{{ amount_paid }}</td>
+        </tr>
+        <tr>
+          <th>Paid On:</th>
+          <td>{{ paid_on }}</td>
+        </tr>
+        <tr>
+          <th>Transaction ID:</th>
+          <td>{{ transaction_id }}</td>
+        </tr>
+
+        <tr>
+          <th>Payment Mode:</th>
+          <td>{{ payment_mode }}</td>
+        </tr>
+      </table>
+    </div>
+    <div class="signature-section">
+      <div class="signature-label">Authorized Signatory</div>
+      <img src="{{ settings.AWS_S3_BUCKET_URL }}/Pavaman_Sign.png" alt="Signature" class="signature-img" />
+    </div>
+    <div class="footer">
+      This receipt is auto-generated and valid without signature.
+    </div>
+  </div>
 </body>
+
 </html>
+
+<!--
+| Template Variable          | Example Value                  |
+| -------------------------- | ------------------------------ |
+| `{{ customer_name }}`      | MADHUSMITA PRADHAN             |
+| `{{ installment_number }}` | 3                              |
+| `{{ amount_paid }}`        | 500000.00                      |
+| `{{ paid_on }}`            | 10 Jul 2025, 11:16 AM          |
+| `{{ transaction_id }}`     | TXN6543219870                  |
+| `{{ payment_mode }}`       | UPI / Net Banking / Debit Card |
+-->

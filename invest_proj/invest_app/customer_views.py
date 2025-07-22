@@ -1,8 +1,12 @@
+from datetime import date
 from decimal import Decimal
 import string
+
+import num2words
 from invest_app.utils.shared_imports import *
 from invest_app.utils.sessions import customer_login_required 
-from .models import Admin, CustomerRegister,PaymentDetails, KYCDetails, CustomerMoreDetails, NomineeDetails, Role
+from .models import (Admin, CompanyDroneModelInfo, CustomerRegister,
+ InvoiceDetails,PaymentDetails, KYCDetails, CustomerMoreDetails, NomineeDetails, Role,)
 from invest_app.utils.msg91 import send_bulk_sms
 from invest_app.utils.idfy_verification import (
     verify_aadhar_sync,
@@ -19,6 +23,10 @@ from django.template.loader import render_to_string
 from weasyprint import HTML
 from io import BytesIO
 from django.core.mail import EmailMessage
+from django.utils import timezone
+from datetime import date
+from django.utils.timezone import localtime
+from num2words import num2words
 
 # --------------
 def get_indian_time():
@@ -179,19 +187,6 @@ def verify_customer_otp(request):
             customer_qs = CustomerRegister.objects.filter(mobile_no=mobile_no).only(
                 "id", "mobile_no", "first_name", "last_name", "otp", "account_status", "register_status", "otp_send_type"
             )
-
-        # if email and mobile_no:
-        #     customer_qs = CustomerRegister.objects.filter(email=email, mobile_no=mobile_no).only(
-        #         "id", "email", "mobile_no", "first_name", "last_name", "otp", "account_status", "register_status", "otp_send_type"
-        #     )
-        # elif email:
-        #     customer_qs = CustomerRegister.objects.filter(email=email).only(
-        #         "id", "email", "first_name", "last_name", "otp", "account_status", "register_status", "otp_send_type"
-        #     )
-        # elif mobile_no:
-        #     customer_qs = CustomerRegister.objects.filter(mobile_no=mobile_no).only(
-        #         "id", "mobile_no", "first_name", "last_name", "otp", "account_status", "register_status", "otp_send_type"
-        #     )
 
         customer = customer_qs.first() if customer_qs else None
 
@@ -1668,241 +1663,6 @@ def upload_pdf_document(request):
             "signature_status": more.signature_status
         })
 
-# -------------------------------------------------------
-def upload_file_to_s3(file_obj, file_key):
-    s3 = boto3.client('s3',
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_S3_REGION_NAME
-    )
-
-    mime_type, _ = mimetypes.guess_type(file_key)
-    extra_args = {'ContentType': mime_type} if mime_type else {}
-
-    s3.upload_fileobj(file_obj, settings.AWS_STORAGE_BUCKET_NAME, file_key, ExtraArgs=extra_args)
-    # return file_key
-    return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{file_key}"
-
-# @customer_login_required
-# @csrf_exempt
-# def initiate_nominee_registration(request):
-#     if request.method != "POST":
-#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
-#     try:
-#         data, files = request.POST, request.FILES
-#         customer_id = data.session.get("customer_id")
-#         mode = data.get("mode", "create").lower()
-#         if customer_id:
-#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-#         # if not customer_id or int(customer_id) != int(session_customer_id):
-#         #     return JsonResponse({"error": "Customer ID mismatch."}, status=403)
-
-#         if mode == "edit":
-#             required_fields = ["nominee_id", "first_name", "last_name", "relation"]
-#             file_upload_required = False
-#         else:
-#             required_fields = ["first_name", "last_name", "relation", "dob", "address_proof", "share"]
-#             file_fields = ["address_proof_file", "id_proof_file"]
-#             file_upload_required = True
-
-#         missing_fields = [f for f in required_fields if not data.get(f)]
-#         missing_files = [f for f in file_fields if f not in files] if file_upload_required else []
-
-#         if missing_fields or missing_files:
-#             return JsonResponse({"error": f"{', '.join(missing_fields + missing_files)} is required for {mode}."}, status=400)
-
-#         nominee_data = {k: data[k] for k in required_fields}
-#         cache_key_prefix = f"{mode}_nominee_{customer_id}"
-#         cache.set(f"{cache_key_prefix}_data", nominee_data, timeout=600)
-
-#         if file_upload_required:
-#             address_file = files["address_proof_file"]
-#             id_file = files["id_proof_file"]
-
-#             addr_ext = os.path.splitext(address_file.name)[1].lower()
-#             id_ext = os.path.splitext(id_file.name)[1].lower()
-
-#             allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.svg']
-#             if addr_ext not in allowed_extensions or id_ext not in allowed_extensions:
-#                 return JsonResponse({'error': 'Invalid file extension for uploaded files.'}, status=400)
-
-#             cache.set(f"{cache_key_prefix}_addr_ext", addr_ext, timeout=600)
-#             cache.set(f"{cache_key_prefix}_id_ext", id_ext, timeout=600)
-
-#             cache.set(f"{cache_key_prefix}_files", {
-#                 "address_proof_file": address_file.read(),
-#                 "id_proof_file": id_file.read()
-#             }, timeout=600)
-
-#         customer = CustomerRegister.objects.only("id", "mobile_no").get(id=customer_id)
-#         otp = generate_otp()
-#         customer.otp = otp
-#         customer.changed_on = timezone_now()
-#         customer.save(update_fields=["otp", "changed_on"])
-
-#         send_bulk_sms([str(customer.mobile_no)], otp)
-
-#         return JsonResponse({"message": f"OTP sent to registered mobile for nominee {mode}."})
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
-# @customer_login_required    
-# @csrf_exempt
-# def verify_and_update_nominee(request):
-#     if request.method != "POST":
-#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
-
-#     try:
-#         data = request.POST
-#         otp = data.get("otp")
-#         customer_id = request.session.get("customer_id")
-#         mode = "edit"
-
-#         if not customer_id:
-#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-
-#         if not otp:
-#             return JsonResponse({"error": "OTP is required."}, status=400)
-
-#         customer = CustomerRegister.objects.get(id=customer_id)
-#         if str(customer.otp) != otp:
-#             return JsonResponse({"error": "Invalid OTP."}, status=400)
-#         if not customer.is_otp_valid():
-#             return JsonResponse({"error": "OTP expired."}, status=400)
-
-#         customer.otp = None
-#         customer.changed_on = None
-#         customer.save(update_fields=["otp", "changed_on"])
-
-#         key_prefix = f"{mode}_nominee_{customer_id}"
-#         nominee_data = cache.get(f"{key_prefix}_data")
-
-#         if not nominee_data or "nominee_id" not in nominee_data:
-#             return JsonResponse({"error": "Session expired or missing nominee_id."}, status=400)
-
-#         nominee = NomineeDetails.objects.filter(id=nominee_data["nominee_id"], customer=customer).first()
-#         if not nominee:
-#             return JsonResponse({"error": "Nominee not found."}, status=404)
-
-#         # Optional file updates
-#         files_data = cache.get(f"{key_prefix}_files")
-#         addr_ext = cache.get(f"{key_prefix}_addr_ext")
-#         id_ext = cache.get(f"{key_prefix}_id_ext")
-
-#         if files_data:
-#             if "address_proof_file" in files_data:
-#                 address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
-#                 address_file.name = f"address{addr_ext}"
-#                 address_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
-#                 upload_file_to_s3(address_file, address_key)
-#                 nominee.address_proof_path = address_key
-
-#             if "id_proof_file" in files_data:
-#                 id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
-#                 id_file.name = f"id{id_ext}"
-#                 id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
-#                 upload_file_to_s3(id_file, id_key)
-#                 nominee.id_proof_path = id_key
-
-#         # Update fields
-#         nominee.first_name = nominee_data["first_name"]
-#         nominee.last_name = nominee_data["last_name"]
-#         nominee.relation = nominee_data["relation"]
-#         nominee.save()
-
-#         # Clean cache
-#         for suffix in ["data", "files", "addr_ext", "id_ext"]:
-#             cache.delete(f"{key_prefix}_{suffix}")
-
-#         return JsonResponse({"message": "Nominee updated successfully.", "nominee_id": nominee.id})
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
-# @customer_login_required
-# @csrf_exempt
-# def verify_and_save_nominee(request):
-#     if request.method != "POST":
-#         return JsonResponse({"error": "Only POST method allowed."}, status=405)
-
-#     try:
-#         data = request.POST
-#         otp = data.get("otp")
-#         customer_id = request.session.get("customer_id")
-#         mode = "create"
-
-#         if not customer_id:
-#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-#         if not otp:
-#             return JsonResponse({"error": "OTP is required."}, status=400)
-
-#         customer = CustomerRegister.objects.get(id=customer_id)
-#         if str(customer.otp) != otp:
-#             return JsonResponse({"error": "Invalid OTP."}, status=400)
-#         if not customer.is_otp_valid():
-#             return JsonResponse({"error": "OTP expired."}, status=400)
-
-#         customer.otp = None
-#         customer.changed_on = None
-#         customer.save(update_fields=["otp", "changed_on"])
-
-#         # Load cached data
-#         key_prefix = f"{mode}_nominee_{customer_id}"
-#         nominee_data = cache.get(f"{key_prefix}_data")
-#         files_data = cache.get(f"{key_prefix}_files")
-
-#         if not all([nominee_data, files_data]):
-#             return JsonResponse({"error": "Session expired or incomplete data."}, status=400)
-
-#         # Upload files
-#         address_file = BytesIO(files_data["address_proof_file"].encode("latin1"))
-#         address_file.name = "address_proof.jpg"
-#         id_file = BytesIO(files_data["id_proof_file"].encode("latin1"))
-#         id_file.name = "id_proof.jpg"
-
-#         addr_key, _, _, _ = generate_customer_file_key(address_file, customer, "nominee_address_proof")
-#         id_key, _, _, _ = generate_customer_file_key(id_file, customer, "nominee_id_proof")
-#         upload_file_to_s3(address_file, addr_key)
-#         upload_file_to_s3(id_file, id_key)
-
-#         # Check for duplicate
-#         if NomineeDetails.objects.filter(
-#             customer=customer,
-#             first_name=nominee_data["first_name"],
-#             last_name=nominee_data["last_name"],
-#             relation=nominee_data["relation"],
-#             nominee_status=1
-#         ).exists():
-#             return JsonResponse({"error": "This nominee already exists for the customer."}, status=409)
-
-#         dob = datetime.strptime(nominee_data["dob"], "%Y-%m-%d").date()
-#         admin = Admin.objects.only("id").first()
-#         if not admin:
-#             return JsonResponse({"error": "Admin not found."}, status=500)
-
-#         nominee = NomineeDetails.objects.create(
-#             customer=customer,
-#             first_name=nominee_data["first_name"],
-#             last_name=nominee_data["last_name"],
-#             relation=nominee_data["relation"],
-#             dob=dob,
-#             share=nominee_data["share"],
-#             address_proof=nominee_data["address_proof"],
-#             address_proof_path=addr_key,
-#             id_proof_path=id_key,
-#             admin=admin,
-#             nominee_status=1
-#         )
-
-#         for suffix in ["data", "files"]:
-#             cache.delete(f"{key_prefix}_{suffix}")
-
-#         return JsonResponse({"message": "Nominee saved successfully.", "nominee_id": nominee.id})
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
-    
-# ----------------`------------------------
-# `
 def get_s3_url(path):
     if path:
         return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{path}"
@@ -2046,7 +1806,7 @@ def completed_status(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-
+#part wise payment 
 @customer_login_required
 @csrf_exempt
 def create_drone_order(request):
@@ -2170,8 +1930,108 @@ def create_drone_order(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+#one time payment
+# @customer_login_required
+# @csrf_exempt
+# def _create_drone_order(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
 
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = request.session.get('customer_id')
+#         email = data.get('email')
+#         quantity = int(data.get('quantity') or 1)
+#         total_amount = Decimal(data.get('total_amount') or 0)
+#         payment_type = data.get('payment_type', 'fullpayment').lower()
 
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
+#         if not all([email, quantity, total_amount]):
+#             return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+#         if payment_type != "fullpayment":
+#             return JsonResponse({'error': 'Only fullpayment is allowed in this API'}, status=400)
+
+#         if quantity > 10:
+#             return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
+
+#         customer = CustomerRegister.objects.filter(id=customer_id, email=email, status=1).first()
+#         if not customer:
+#             return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#         unit_price = 100000
+#         total_required = unit_price * quantity
+
+#         if total_amount > total_required:
+#             return JsonResponse({
+#                 'error': f'Maximum amount is ₹{total_required:,}. Please enter a valid amount.'
+#             }, status=400)
+
+#         if total_amount > 500000:
+#             return JsonResponse({
+#                 'error': 'Full payment cannot exceed ₹5,00,000 in a single order (Razorpay test mode limit).'
+#             }, status=400)
+
+#         # Clear previous unpaid order
+#         latest_order = PaymentDetails.objects.filter(customer=customer).order_by('-created_at').first()
+#         if latest_order and latest_order.drone_payment_status != 'paid':
+#             PaymentDetails.objects.filter(
+#                 customer=customer,
+#                 drone_order_id=latest_order.drone_order_id
+#             ).delete()
+
+#         # Create Razorpay order
+#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+#         drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+#         admin = Admin.objects.filter(id=1).first()
+#         if not admin:
+#             return JsonResponse({'error': 'Admin not found'}, status=500)
+
+#         razorpay_order = client.order.create({
+#             'amount': int(total_amount * 100),
+#             'currency': 'INR',
+#             'payment_capture': 1,
+#             'notes': {
+#                 'customer_id': str(customer_id),
+#                 'email': email,
+#                 'drone_order_id': drone_order_id,
+#                 'quantity': str(quantity),
+#                 'unit_price': str(unit_price),
+#             }
+#         })
+
+#         PaymentDetails.objects.create(
+#             customer=customer,
+#             razorpay_order_id=razorpay_order['id'],
+#             amount=total_amount,
+#             total_amount=total_amount,
+#             drone_payment_status='created',
+#             quantity=quantity,
+#             drone_order_id=drone_order_id,
+#             payment_type=payment_type,
+#             admin=admin
+#         )
+
+#         return JsonResponse({
+#             'message': 'Full payment order created.',
+#             'drone_order_id': drone_order_id,
+#             'customer_id': customer_id,
+#             'payment_type': payment_type,
+#             'order': {
+#                 'order_id': razorpay_order['id'],
+#                 'razorpay_key': settings.RAZORPAY_KEY_ID,
+#                 'amount': float(total_amount),
+#                 'currency': 'INR',
+#                 'email': email,
+#                 'quantity': quantity,
+#             }
+    #     })
+
+    # except Exception as e:
+    #     return JsonResponse({'error': str(e)}, status=500)
+#individual call back for fullpayment
 # @csrf_exempt
 # def _razorpay_callback(request):
 #     try:
@@ -2241,7 +2101,8 @@ def create_drone_order(request):
 #     except Exception as e:
 #         print("Webhook error:", str(e))
 #         return JsonResponse({'error': str(e)}, status=500)
-    
+#combine status 
+#    
 @customer_login_required
 @csrf_exempt
 def payment_status_check(request):
@@ -2276,14 +2137,44 @@ def payment_status_check(request):
             drone_order_id=drone_order_id,
             payment_type=payment_type
         )
-
+        
         if not all_parts.exists():
             return JsonResponse({
                 "paid": False,
                 "message": "Order not found for this payment type.",
                 "payment_status": 0
             })
+        # -----------
+        # Get all invoices related to this drone_order_id
+        invoice_qs = InvoiceDetails.objects.filter(
+            payment__drone_order_id=drone_order_id,
+            payment__customer_id=customer_id,
+            status=1
+        )
 
+        total_invoices = invoice_qs.count()
+        # Separate total amounts for each type
+        drone_amount = invoice_qs.filter(invoice_type='drone').aggregate(
+            total=Sum('total_invoice_amount'))['total'] or Decimal('0.00')
+
+
+        accessory_amounts = invoice_qs.filter(invoice_type='accessory') \
+            .values_list('total_invoice_amount', flat=True).distinct()
+
+        # If there are any accessory invoices, take only one unique amount
+        accessory_amount = accessory_amounts[0] if accessory_amounts else Decimal('0.00')
+
+        amc_amount = invoice_qs.filter(invoice_type='amc').aggregate(
+            total=Sum('total_invoice_amount'))['total'] or Decimal('0.00')
+
+        # Deduplicate drone + accessory if same
+        if drone_amount == accessory_amount and drone_amount > 0:
+            total_invoice_amount = drone_amount + amc_amount
+        else:
+            total_invoice_amount = drone_amount + accessory_amount + amc_amount
+        invoice_status_sum = invoice_qs.aggregate(total=Sum('total_invoice_status'))['total'] or 0
+        total_invoice_status = 1 if invoice_status_sum == 5 else 0
+        # -------------
         total_parts = all_parts.count()
         paid_parts = all_parts.filter(drone_payment_status='paid').count()
 
@@ -2316,7 +2207,11 @@ def payment_status_check(request):
             "total_amount": str(total_amount),
             "paid_amount": str(total_paid),
             "remaining_amount": str(remaining_amount),
-            "days_left": days_left
+            "days_left": days_left,
+            "total_invoices": total_invoices,
+            "total_invoice_amount": str(total_invoice_amount),
+            "total_invoice_status": total_invoice_status,
+
         })
 
     except Exception as e:
@@ -2582,6 +2477,7 @@ def create_drone_installment_order(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+#combile call back
 @csrf_exempt
 def razorpay_callback(request):
     try:
@@ -2627,7 +2523,7 @@ def razorpay_callback(request):
                         "payment_mode": payment.payment_mode,
                         "amount": payment.amount,
                     }
-                    pdf_file = generate_receipt_pdf(context)
+                    pdf_file = generate_receipt_pdf(context,"receipt_pdf.html")
                     send_receipt_email(payment.customer, payment,kyc, pdf_file)
                     
                     all_parts = PaymentDetails.objects.filter(
@@ -2672,8 +2568,8 @@ def razorpay_callback(request):
         print("Webhook Error:", str(e))
         return JsonResponse({'error': str(e)}, status=500)
 
-def generate_receipt_pdf(context):
-    html_string = render_to_string("receipt_pdf.html", context)
+def generate_receipt_pdf(context, template_name):
+    html_string = render_to_string(template_name, context)
     pdf_file = BytesIO()
     HTML(string=html_string).write_pdf(target=pdf_file)
     pdf_file.seek(0)
@@ -2768,7 +2664,7 @@ def send_receipt_email(customer, payment,kyc, pdf_file):
     )
     email_message.send()
 
-
+#installment call back
 
 # @csrf_exempt
 # def razorpay_callback(request):
@@ -2858,6 +2754,21 @@ def send_receipt_email(customer, payment,kyc, pdf_file):
 #         return JsonResponse({"message": "Cancelled order deleted successfully."})
 #     except Exception as e:
 #         return JsonResponse({"error": str(e)}, status=500)
+
+def upload_file_to_s3(file_obj, file_key):
+    s3 = boto3.client('s3',
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+        region_name=settings.AWS_S3_REGION_NAME
+    )
+
+    mime_type, _ = mimetypes.guess_type(file_key)
+    extra_args = {'ContentType': mime_type} if mime_type else {}
+
+    s3.upload_fileobj(file_obj, settings.AWS_STORAGE_BUCKET_NAME, file_key, ExtraArgs=extra_args)
+    # return file_key
+    return f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{file_key}"
+
 @customer_login_required
 @csrf_exempt
 def stage_nominees(request):
@@ -3032,3 +2943,1301 @@ def save_staged_nominees(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
+# ✅ 1. Create Full Payment Order API (No Split)
+
+# @customer_login_required
+# @csrf_exempt
+# def create_drone_order(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = request.session.get('customer_id')
+#         email = data.get('email')
+#         quantity = int(data.get('quantity') or 1)
+#         total_amount = Decimal(data.get('total_amount') or 0)
+#         payment_type = data.get('payment_type', 'fullpayment').lower()
+
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
+#         if not all([email, quantity, total_amount]):
+#             return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+#         if payment_type != "fullpayment":
+#             return JsonResponse({'error': 'Only fullpayment is allowed in this API'}, status=400)
+
+#         if quantity > 10:
+#             return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
+
+#         customer = CustomerRegister.objects.filter(id=customer_id, email=email, status=1).first()
+#         if not customer:
+#             return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#         unit_price = 200000
+#         total_required = unit_price * quantity
+
+#         if total_amount > total_required:
+#             return JsonResponse({
+#                 'error': f'Maximum amount is ₹{total_required:,}. Please enter a valid amount.'
+#             }, status=400)
+
+#         if total_amount > 500000:
+#             return JsonResponse({
+#                 'error': 'Full payment cannot exceed ₹5,00,000 in a single order (Razorpay test mode limit).'
+#             }, status=400)
+
+#         drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+
+#         admin = Admin.objects.filter(id=1).first()
+#         if not admin:
+#             return JsonResponse({'error': 'Admin not found'}, status=500)
+
+#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+#         razorpay_order = client.order.create({
+#             'amount': int(total_amount * 100),
+#             'currency': 'INR',
+#             'payment_capture': 1,
+#             'notes': {
+#                 'customer_id': str(customer_id),
+#                 'email': email,
+#                 'drone_order_id': drone_order_id,
+#                 'quantity': str(quantity),
+#                 'unit_price': str(unit_price),
+#             }
+#         })
+
+#         PaymentDetails.objects.create(
+#             customer=customer,
+#             razorpay_order_id=razorpay_order['id'],
+#             amount=total_amount,
+#             total_amount=total_amount,
+#             part_number=1,
+#             drone_payment_status='created',
+#             payment_status=0,
+#             quantity=quantity,
+#             drone_order_id=drone_order_id,
+#             payment_type=payment_type,
+#             admin=admin
+#         )
+
+#         return JsonResponse({
+#             'message': 'Full payment order created.',
+#             'drone_order_id': drone_order_id,
+#             'customer_id': customer_id,
+#             'payment_type': payment_type,
+#             'order': {
+#                 'order_id': razorpay_order['id'],
+#                 'razorpay_key': settings.RAZORPAY_KEY_ID,
+#                 'amount': float(total_amount),
+#                 'currency': 'INR',
+#                 'email': email,
+#                 'quantity': quantity,
+#             }
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+
+
+# # ✅ 2. Razorpay Webhook Callback
+
+# @csrf_exempt
+# def razorpay_callback(request):
+#     try:
+#         payload = request.body
+#         data = json.loads(payload)
+#         signature = request.headers.get('X-Razorpay-Signature')
+#         event = data.get('event')
+
+#         expected_signature = hmac.new(
+#             settings.RAZORPAY_WEBHOOK_SECRET.encode(),
+#             msg=payload,
+#             digestmod=hashlib.sha256
+#         ).hexdigest()
+
+#         if signature != expected_signature:
+#             return JsonResponse({'error': 'Invalid signature'}, status=400)
+
+#         payment_entity = data['payload']['payment']['entity']
+#         razorpay_order_id = payment_entity['order_id']
+#         payment_id = payment_entity['id']
+#         payment_method = payment_entity.get('method')
+
+#         payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
+#         if not payment:
+#             return JsonResponse({'error': 'Order not found'}, status=404)
+
+#         if event == 'payment.captured':
+#             if payment.drone_payment_status != 'paid':
+#                 payment.drone_payment_status = 'paid'
+#                 payment.payment_status = 1
+#                 payment.razorpay_payment_id = payment_id
+#                 payment.payment_mode = payment_method
+#                 payment.save()
+
+#         elif event == 'payment.failed':
+#             if payment.drone_payment_status != 'failed':
+#                 payment.drone_payment_status = 'failed'
+#                 payment.razorpay_payment_id = payment_id
+#                 payment.payment_mode = payment_method
+#                 payment.save()
+
+#         return HttpResponse(status=200)
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+
+
+# # # ✅ 3. Celery Task: Reconcile Missed Webhooks
+# # from celery import shared_task
+# # @shared_task
+# # def reconcile_lost_payments():
+# #     from django.utils import timezone
+# #     from datetime import timedelta
+# #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+# #     stale_payments = PaymentDetails.objects.filter(
+# #         drone_payment_status__in=['created', 'pending'],
+# #         created_at__lt=timezone.now() - timedelta(minutes=15)
+# #     )
+
+# #     for payment in stale_payments:
+# #         try:
+# #             response = client.order.payments(payment.razorpay_order_id)
+# #             for pay in response.get("items", []):
+# #                 if pay['status'] == 'captured':
+# #                     payment.drone_payment_status = 'paid'
+# #                     payment.razorpay_payment_id = pay['id']
+# #                     payment.payment_mode = pay.get('method')
+# #                     payment.payment_status = 1
+# #                     payment.save()
+# #                     break
+# #         except Exception as e:
+# #             print(f"❌ Reconciliation failed for order {payment.drone_order_id}: {str(e)}")
+
+
+# # # ✅ 4. Optional Admin Reconciliation API
+# from celery import shared_task
+# from django.utils import timezone
+# from datetime import timedelta
+# import razorpay
+# from invest_app.models import PaymentDetails  # update path to your app
+# from django.conf import settings
+
+# @shared_task
+# def reconcile_lost_payments():
+#     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+
+#     # Get all orders older than 15 minutes that are still unpaid
+#     stale_payments = PaymentDetails.objects.filter(
+#         drone_payment_status__in=['created', 'pending'],
+#         created_at__lt=timezone.now() - timedelta(minutes=15)
+#     )
+
+#     for payment in stale_payments:
+#         try:
+#             response = client.order.payments(payment.razorpay_order_id)
+#             items = response.get("items", [])
+
+#             if not items:
+#                 print(f"⚠️ No payments for order {payment.drone_order_id} (Razorpay ID: {payment.razorpay_order_id})")
+
+#                 # ✅ Mark it as pending if not already
+#                 if payment.drone_payment_status != 'pending':
+#                     payment.drone_payment_status = 'pending'
+#                     payment.save()
+#                 continue
+
+#             for pay in items:
+#                 if pay['status'] == 'captured':
+#                     payment.drone_payment_status = 'paid'
+#                     payment.razorpay_payment_id = pay['id']
+#                     payment.payment_mode = pay.get('method')
+#                     payment.payment_status = 1
+#                     payment.save()
+#                     print(f"✅ Payment reconciled: {payment.drone_order_id} marked as paid.")
+#                     break
+
+#         except Exception as e:
+#             print(f"❌ Reconciliation failed for order {payment.drone_order_id}: {str(e)}")
+
+# @csrf_exempt
+# def reconcile_payment(request):
+#     try:
+#         data = json.loads(request.body)
+#         razorpay_order_id = data.get("razorpay_order_id")
+
+#         if not razorpay_order_id:
+#             return JsonResponse({"error": "Missing Razorpay Order ID"}, status=400)
+
+#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+#         response = client.order.payments(razorpay_order_id)
+#         items = response.get('items', [])
+
+#         if not items:
+#             return JsonResponse({"error": "No payments found for this order."}, status=404)
+
+#         latest_payment = items[-1]
+#         if latest_payment['status'] == 'captured':
+#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
+#             if payment and payment.drone_payment_status != 'paid':
+#                 payment.razorpay_payment_id = latest_payment['id']
+#                 payment.drone_payment_status = 'paid'
+#                 payment.payment_status = 1
+#                 payment.payment_mode = latest_payment.get('method')
+#                 payment.save()
+#                 return JsonResponse({"message": "✅ Payment reconciled and marked as PAID."})
+
+#             return JsonResponse({"message": "Already marked as paid."})
+
+#         else:
+#             return JsonResponse({"status": latest_payment['status'], "message": "Payment not captured."})
+
+#     except Exception as e:
+#         return JsonResponse({"error": str(e)}, status=500)
+from datetime import date
+
+def generate_invoice_number(created_at):
+    invoice_date = timezone.localtime(created_at).date()
+    year = invoice_date.year
+    month = invoice_date.month
+
+    # Determine financial year
+    if month < 4:
+        start_year = year - 1
+        end_year = year
+    else:
+        start_year = year
+        end_year = year + 1
+
+    fy_start = str(start_year)[-2:]
+    fy_end = str(end_year)[-2:]
+    month_str = f"{month:02d}"
+    financial_year = f"{fy_start}-{fy_end}"
+
+    start_date = date(start_year, 4, 1)
+    end_date = date(end_year, 3, 31)
+
+    # GLOBAL SERIAL NUMBER — across all invoice types
+    latest_invoice = InvoiceDetails.objects.filter(
+        created_at__range=(start_date, end_date)
+    ).order_by('-created_at').first()
+
+    if latest_invoice:
+        try:
+            last_serial = int(latest_invoice.invoice_number.split("/")[-1])
+        except:
+            last_serial = 0
+    else:
+        last_serial = 0
+
+    next_serial = last_serial + 1
+    serial_str = f"{next_serial:04d}"
+
+    return f"PAV-INV-{financial_year}/{month_str}/{serial_str}"
+@csrf_exempt
+def create_invoice(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+        drone_order_id = data.get('drone_order_id')
+        address_type = data.get('address_type', 'permanent')
+
+        if not customer_id or not drone_order_id:
+            return JsonResponse({'error': 'Customer ID and drone order ID are required'}, status=400)
+
+        customer = CustomerRegister.objects.get(id=customer_id)
+        customer_more = CustomerMoreDetails.objects.filter(customer_id=customer_id).first()
+        admin = Admin.objects.first()
+        if not admin:
+            return JsonResponse({'error': 'Admin not found'}, status=500)
+
+        # Check for existing invoice
+        existing_invoice = InvoiceDetails.objects.filter(
+            customer=customer,
+            invoice_status=1,
+            invoice_type="Drone",
+            payment__drone_order_id=drone_order_id
+        ).first()
+        if existing_invoice:
+            return JsonResponse({
+                "message": "Invoice already exists for this customer.",
+                "invoice_id": existing_invoice.id,
+                "invoice_number": existing_invoice.invoice_number,
+                "invoice_date": existing_invoice.created_at.strftime("%Y-%m-%d"),
+            }, status=200)
+
+        payment = PaymentDetails.objects.filter(
+            customer=customer,
+            drone_order_id=drone_order_id,
+            drone_payment_status='paid',
+            status=1
+        ).first()
+        if not payment:
+            return JsonResponse({'error': 'No paid payment found for this customer'}, status=404)
+
+        # Address logic
+        if customer_more.same_address:
+            state = customer_more.state or ""
+        elif address_type == 'present':
+            state = customer_more.present_state or ""
+        else:
+            state = customer_more.state or ""
+
+        company_state = "Telangana"
+        is_intrastate = state.strip().lower() == company_state.lower()
+
+        required_quantity = payment.quantity
+        available_drones = CompanyDroneModelInfo.objects.filter(assign_status=0)[:required_quantity]
+
+        if len(available_drones) < required_quantity:
+            return JsonResponse({'error': f'Only {len(available_drones)} drones available, but {required_quantity} required.'}, status=400)
+
+        # === GST Calculations ===
+        rate_per_unit = Decimal('310000')
+        base_amount = rate_per_unit * required_quantity
+        GST_PERCENTAGE = Decimal('5.0')
+        gst_amount = base_amount * (GST_PERCENTAGE / 100)
+
+        if is_intrastate:
+            cgst = sgst = gst_amount / 2
+            igst = Decimal('0.00')
+        else:
+            cgst = sgst = Decimal('0.00')
+            igst = gst_amount
+
+        total_invoice_amount = base_amount + cgst + sgst + igst
+        rounded_amount = int(round(total_invoice_amount))
+        try:
+            total_in_words = num2words(rounded_amount, lang='en_IN').title() + " Rupees Only"
+        except:
+            total_in_words = ""
+
+        # Generate invoice number
+        invoice_number = generate_invoice_number(timezone.now())
+
+        # Assign drones and get UINs
+        uin_list = []
+        drone_model_ids = [drone.id for drone in available_drones]
+        uin_list = [drone.uin_number for drone in available_drones]
+        for drone in available_drones:
+            drone.assign_status = 0
+            drone.save()
+        # Create single invoice row
+        invoice = InvoiceDetails.objects.create(
+            customer=customer,
+            customer_more=customer_more,
+            admin=admin,
+            payment=payment,
+            drone_model_ids=drone_model_ids,
+            invoice_number=invoice_number,
+            serial_no=1,
+            parts_quantity=required_quantity,
+            hsn_sac_code="88062300",
+            uom="No",
+            rate_per_unit=rate_per_unit,
+            total_amount=base_amount,
+            cgst=cgst,
+            sgst=sgst,
+            igst=igst,
+            total_taxable_amount=base_amount,
+            total_invoice_amount=total_invoice_amount,
+            total_invoice_amount_words=total_in_words,
+            address_type=address_type,
+            description="TEJA-S (UIN Drone)",
+            uin_no=", ".join([d.uin_number for d in available_drones]),
+            invoice_type="Drone",
+            invoice_status=1
+        )
+
+        return JsonResponse({
+            "message": "Drone invoice created successfully",
+            "invoice_number": invoice_number,
+            "total_invoice_amount": float(total_invoice_amount),
+            "total_invoice_amount_words": total_in_words,
+            "rows": [
+                {
+                    "serial_no": 1,
+                    "uin_no": ", ".join(uin_list),
+                    "quantity": required_quantity,
+                    "rate": float(rate_per_unit),
+                    "total": float(base_amount),
+                    "cgst": float(cgst),
+                    "sgst": float(sgst),
+                    "igst": float(igst),
+                    "invoice_id": invoice.id,
+                    "invoice_status": invoice.invoice_status
+                }
+            ]
+        }, status=201)
+
+    except CustomerRegister.DoesNotExist:
+        return JsonResponse({'error': 'Customer not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+def create_accessory_invoice(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+        drone_order_id = data.get('drone_order_id')
+        uin_list = data.get('uin_list', [])
+        address_type = data.get('address_type', 'permanent')
+
+        if not customer_id or not drone_order_id or not uin_list:
+            return JsonResponse({'error': 'Customer ID, Drone Order ID, and UIN list are required'}, status=400)
+
+        customer = CustomerRegister.objects.get(id=customer_id)
+        customer_more = CustomerMoreDetails.objects.filter(customer_id=customer_id).first()
+        admin = Admin.objects.first()
+        if not admin:
+            return JsonResponse({'error': 'Admin not found'}, status=500)
+
+        payment = PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            drone_order_id=drone_order_id,
+            drone_payment_status='paid',
+            status=1
+        ).first()
+       
+        if not payment:
+            return JsonResponse({'error': 'No paid payment found for this customer and drone order.'}, status=404)
+        # Check for existing accessory invoice
+        existing_invoice = InvoiceDetails.objects.filter(
+            customer=customer,
+            invoice_status=1,
+            invoice_type="accessory",
+            payment__drone_order_id=drone_order_id
+        ).first()
+
+        if existing_invoice:
+            return JsonResponse({
+                "message": "Accessory invoice already exists for this customer.",
+                "invoice_id": existing_invoice.id,
+                "invoice_number": existing_invoice.invoice_number,
+                "invoice_date": existing_invoice.created_at.strftime("%Y-%m-%d"),
+            }, status=200)
+
+        if customer_more.same_address:
+            state = customer_more.state or ""
+        elif address_type == 'present':
+            state = customer_more.present_state or ""
+        else:
+            state = customer_more.state or ""
+
+        company_state = "Telangana"
+        is_intrastate = state.strip().lower() == company_state.lower()
+        drone_count = len(uin_list)
+
+        # Accessory items per total drone count
+        accessory_items = [
+            {"description": "Batteries (8 Nos) - 1 Set = 2 Batteries", "qty": 4 * drone_count, "rate": Decimal('29000'), "hsn": "8806", "uom": "Set"},
+            {"description": "DG Set", "qty": 1 * drone_count, "rate": Decimal('110000'), "hsn": "8502", "uom": "No"},
+            {"description": "Water Tank", "qty": 1 * drone_count, "rate": Decimal('6627'), "hsn": "3925", "uom": "No"}
+        ]
+
+        total_taxable_amount = sum(item['qty'] * item['rate'] for item in accessory_items)
+        GST_PERCENTAGE = Decimal('18.0')
+        gst_amount = total_taxable_amount * (GST_PERCENTAGE / 100)
+
+        if is_intrastate:
+            cgst = sgst = gst_amount / 2
+            igst = Decimal('0.00')
+        else:
+            cgst = sgst = Decimal('0.00')
+            igst = gst_amount
+
+        total_invoice_amount = total_taxable_amount + cgst + sgst + igst
+        rounded_amount = int(round(total_invoice_amount))
+
+        try:
+            total_in_words = num2words(rounded_amount, lang='en_IN').title() + " Rupees Only"
+        except Exception as e:
+            print("Num2words Error:", e)
+            total_in_words = ""
+
+        #Generate invoice number once
+        invoice_number = generate_invoice_number(timezone.now())
+        drones = CompanyDroneModelInfo.objects.filter(uin_number__in=uin_list)
+        drone_model_ids = [d.id for d in drones]
+
+        serial_no = 1
+        created_rows = []
+
+        for item in accessory_items:
+            line_total = item['qty'] * item['rate']
+            invoice_status = 1 if serial_no == 1 else 0
+
+            invoice = InvoiceDetails.objects.create(
+                customer=customer,
+                customer_more=customer_more,
+                admin=admin,
+                payment=payment,
+                drone_model_ids=drone_model_ids,
+                invoice_number=invoice_number,
+                serial_no=serial_no,
+                uin_no=", ".join(uin_list),  # Optional: or uin_list[0], or leave blank
+                invoice_type="accessory",
+                invoice_status=invoice_status,
+                parts_quantity=item['qty'],
+                hsn_sac_code=item['hsn'],
+                uom=item['uom'],
+                rate_per_unit=item['rate'],
+                total_amount=line_total,
+                cgst=cgst,
+                sgst=sgst,
+                igst=igst,
+                total_taxable_amount=total_taxable_amount,
+                total_invoice_amount=total_invoice_amount,
+                total_invoice_amount_words=total_in_words,
+                address_type=address_type,
+                description=item['description'],
+                status=1
+            )
+
+            created_rows.append({
+                "serial_no": serial_no,
+                "description": item['description'],
+                "quantity": item['qty'],
+                "rate": float(item['rate']),
+                "total": float(line_total),
+                "cgst": float(cgst),
+                "sgst": float(sgst),
+                "igst": float(igst),
+                "invoice_status": invoice.invoice_status
+            })
+
+            serial_no += 1
+        return JsonResponse({
+            "message": "Accessory invoice created successfully",
+            "invoice_number": invoice_number,
+            "total_invoice_amount": float(total_invoice_amount),
+            "total_invoice_amount_words": total_in_words,
+            "rows": created_rows
+        }, status=201)
+
+    except CustomerRegister.DoesNotExist:
+        return JsonResponse({'error': 'Customer not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+@csrf_exempt
+def create_amc_invoice(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+        drone_order_id = data.get('drone_order_id')
+        address_type = data.get('address_type', 'permanent')
+        uin_list = data.get('uin_list', [])
+
+        if not customer_id or not drone_order_id or not uin_list:
+            return JsonResponse({'error': 'Customer ID, Drone Order ID, and UIN list are required'}, status=400)
+
+        customer = CustomerRegister.objects.get(id=customer_id)
+        customer_more = CustomerMoreDetails.objects.filter(customer_id=customer_id).first()
+        admin = Admin.objects.first()
+        if not admin:
+            return JsonResponse({'error': 'Admin not found'}, status=500)
+
+        payment = PaymentDetails.objects.filter(
+            customer=customer,
+            drone_order_id=drone_order_id,
+            drone_payment_status='paid',
+            status=1
+        ).first()
+        if not payment:
+            return JsonResponse({'error': 'No paid payment found for this customer'}, status=404)
+
+        # Determine state
+        if customer_more.same_address:
+            state = customer_more.state or ""
+        elif address_type == 'present':
+            state = customer_more.present_state or ""
+        else:
+            state = customer_more.state or ""
+
+        company_state = "Telangana"
+        is_intrastate = state.strip().lower() == company_state.lower()
+
+        # Drone details
+        drones = CompanyDroneModelInfo.objects.filter(uin_number__in=uin_list)
+        drone_model_ids = [d.id for d in drones]
+
+        if len(drones) != len(uin_list):
+            return JsonResponse({'error': 'Some UINs not found in system'}, status=400)
+
+        quantity = len(drones)
+        rate_per_unit = Decimal('508475')
+        base_amount = rate_per_unit * quantity
+        GST_PERCENTAGE = Decimal('18.0')
+        gst_amount = base_amount * (GST_PERCENTAGE / 100)
+
+        if is_intrastate:
+            cgst = sgst = gst_amount / 2
+            igst = Decimal('0.00')
+        else:
+            cgst = sgst = Decimal('0.00')
+            igst = gst_amount
+
+        total_invoice_amount = base_amount + cgst + sgst + igst
+        rounded_amount = int(round(total_invoice_amount))
+        try:
+            total_in_words = num2words(rounded_amount, lang='en_IN').title() + " Rupees Only"
+        except:
+            total_in_words = ""
+
+        invoice_number = generate_invoice_number(timezone.now())
+        
+        invoice = InvoiceDetails.objects.create(
+            customer=customer,
+            customer_more=customer_more,
+            admin=admin,
+            payment=payment,
+            drone_model_ids=drone_model_ids,
+            invoice_number=invoice_number,
+            serial_no=1,
+            parts_quantity=quantity,
+            hsn_sac_code="9987",
+            uom="No",
+            rate_per_unit=rate_per_unit,
+            total_amount=base_amount,
+            cgst=cgst,
+            sgst=sgst,
+            igst=igst,
+            total_taxable_amount=base_amount,
+            total_invoice_amount=total_invoice_amount,
+            total_invoice_amount_words=total_in_words,
+            address_type=address_type,
+            description="AMC for 5.5 Years",
+            uin_no=", ".join(uin_list),
+            invoice_type="amc",
+            invoice_status=1
+        )
+
+        return JsonResponse({
+            "message": "AMC invoice created successfully",
+            "invoice_number": invoice_number,
+            "total_invoice_amount": float(total_invoice_amount),
+            "total_invoice_amount_words": total_in_words,
+            "rows": [
+                {
+                    "serial_no": 1,
+                    "uin_no": ", ".join(uin_list),
+                    "quantity": quantity,
+                    "rate": float(rate_per_unit),
+                    "total": float(base_amount),
+                    "cgst": float(cgst),
+                    "sgst": float(sgst),
+                    "igst": float(igst),
+                    "invoice_id": invoice.id,
+                    "invoice_status": invoice.invoice_status
+                }
+            ]
+        }, status=201)
+
+    except CustomerRegister.DoesNotExist:
+        return JsonResponse({'error': 'Customer not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+@customer_login_required
+@csrf_exempt
+def create_invoice_combined(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        customer_id = request.session.get('customer_id')
+        if not customer_id:
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
+
+        drone_order_id = data.get('drone_order_id')
+        address_type = data.get('address_type', 'permanent')
+        uin_list = data.get('uin_list', [])
+        invoice_for = data.get('invoice_for', 'drone').lower()
+
+        if not customer_id or not drone_order_id or (invoice_for != 'drone' and not uin_list):
+            return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+        customer = CustomerRegister.objects.get(id=customer_id)
+        customer_more = CustomerMoreDetails.objects.filter(customer_id=customer_id).first()
+        admin = Admin.objects.first()
+        if not admin:
+            return JsonResponse({'error': 'Admin not found'}, status=500)
+
+        payment = PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            drone_order_id=drone_order_id,
+            drone_payment_status='paid',
+            status=1
+        ).first()
+        if not payment:
+            return JsonResponse({'error': 'No paid payment found for this customer and drone order.'}, status=404)
+
+        if customer_more.same_address:
+            state = customer_more.state or ""
+        elif address_type == 'present':
+            state = customer_more.present_state or ""
+        else:
+            state = customer_more.state or ""
+
+        is_intrastate = state.strip().lower() == "telangana"
+        invoice_number = generate_invoice_number(timezone.now())
+        created_rows = []
+        serial_no = 1
+ 
+        # ---------------- DRONE INVOICE ----------------
+        if invoice_for == 'drone':
+            existing = InvoiceDetails.objects.filter(
+                customer=customer,
+                invoice_type="drone",
+                invoice_status=1,
+                payment__drone_order_id=drone_order_id
+            ).first()
+            if existing:
+                return JsonResponse({
+                    "message": "Drone invoice already exists.",
+                    "invoice_number": existing.invoice_number,
+                    "invoice_status":existing.invoice_status,
+                    "invoice_id":existing.id,
+                    "uni_no":existing.uin_no,
+                    "total_invoice_status":existing.total_invoice_status,
+                }, status=200)
+
+            required_quantity = payment.quantity
+            available_drones = CompanyDroneModelInfo.objects.filter(assign_status=0)[:required_quantity]
+
+            if len(available_drones) < required_quantity:
+                return JsonResponse({'error': f'Only {len(available_drones)} drones available, but {required_quantity} required.'}, status=400)
+
+            rate_per_unit = Decimal('310000')
+            base_amount = rate_per_unit * required_quantity
+            GST_PERCENTAGE = Decimal('5.0')
+            gst_amount = base_amount * (GST_PERCENTAGE / 100)
+
+            if is_intrastate:
+                cgst = sgst = gst_amount / 2
+                igst = Decimal('0.00')
+            else:
+                cgst = sgst = Decimal('0.00')
+                igst = gst_amount
+
+            total_invoice_amount = base_amount + cgst + sgst + igst
+            rounded_amount = int(round(total_invoice_amount))
+
+            try:
+                total_in_words = num2words(rounded_amount, lang='en_IN').title() + " Rupees Only"
+            except:
+                total_in_words = ""
+
+            drone_model_ids = [drone.id for drone in available_drones]
+            uin_list = [drone.uin_number for drone in available_drones]
+
+            for drone in available_drones:
+                drone.assign_status = 1
+                drone.save()
+
+            invoice = InvoiceDetails.objects.create(
+                customer=customer,
+                customer_more=customer_more,
+                admin=admin,
+                payment=payment,
+                drone_model_ids=drone_model_ids,
+                invoice_number=invoice_number,
+                serial_no=1,
+                parts_quantity=required_quantity,
+                hsn_sac_code="88062300",
+                uom="No",
+                rate_per_unit=rate_per_unit,
+                total_amount=base_amount,
+                cgst=cgst,
+                sgst=sgst,
+                igst=igst,
+                total_taxable_amount=base_amount,
+                total_invoice_amount=total_invoice_amount,
+                total_invoice_amount_words=total_in_words,
+                address_type=address_type,
+                description="TEJA-S (UIN Drone)",
+                uin_no=", ".join(uin_list),
+                invoice_type="drone",
+                invoice_status=1
+            )
+
+            created_rows.append({
+                "serial_no": 1,
+                "uin_no": ", ".join(uin_list),
+                "quantity": required_quantity,
+                "rate_per_unit": float(rate_per_unit),
+                "total_amount": float(base_amount),
+                "total_taxable_amount": float(base_amount),
+                "cgst": float(cgst),
+                "sgst": float(sgst),
+                "igst": float(igst),
+                "total_invoice_amount": float(total_invoice_amount),
+                "invoice_id": invoice.id,
+                "invoice_status": invoice.invoice_status,
+                # "total_invoice_status":invoice.total_invoice_status
+            })
+
+        # ---------------- AMC INVOICE ----------------
+        elif invoice_for == 'amc':
+            existing = InvoiceDetails.objects.filter(
+                customer=customer, invoice_type="amc", invoice_status=1, payment__drone_order_id=drone_order_id
+            ).first()
+            if existing:
+                return JsonResponse({
+                    "message": "AMC invoice already exists.",
+                    "invoice_number": existing.invoice_number,
+                    "invoice_status":existing.invoice_status,
+                    "invoice_id":existing.id,
+                    "uni_no":existing.uin_no,
+                    "total_invoice_status":existing.total_invoice_status,
+                }, status=200)
+            
+            drones = CompanyDroneModelInfo.objects.filter(uin_number__in=uin_list)
+            if len(drones) != len(uin_list):
+                return JsonResponse({'error': 'Some UINs not found'}, status=400)
+
+            drone_model_ids = [d.id for d in drones]
+            quantity = len(drones)
+            rate_per_unit = Decimal('508475')
+            base_amount = rate_per_unit * quantity
+            GST_PERCENTAGE = Decimal('18.0')
+            gst_amount = base_amount * (GST_PERCENTAGE / 100)
+            cgst = sgst = igst = Decimal('0.00')
+            if is_intrastate:
+                cgst = sgst = gst_amount / 2
+            else:
+                igst = gst_amount
+
+            total_invoice_amount = base_amount + cgst + sgst + igst
+            rounded_amount = int(round(total_invoice_amount))
+            try:
+                total_in_words = num2words(rounded_amount, lang='en_IN').title() + " Rupees Only"
+            except:
+                total_in_words = ""
+
+            invoice = InvoiceDetails.objects.create(
+                customer=customer,
+                customer_more=customer_more,
+                admin=admin,
+                payment=payment,
+                drone_model_ids=drone_model_ids,
+                invoice_number=invoice_number,
+                serial_no=1,
+                parts_quantity=quantity,
+                hsn_sac_code="9987",
+                uom="No",
+                rate_per_unit=rate_per_unit,
+                total_amount=base_amount,
+                cgst=cgst,
+                sgst=sgst,
+                igst=igst,
+                total_taxable_amount=base_amount,
+                total_invoice_amount=total_invoice_amount,
+                total_invoice_amount_words=total_in_words,
+                address_type=address_type,
+                description="AMC for 5.5 Years",
+                uin_no=", ".join(uin_list),
+                invoice_type="amc",
+                invoice_status=1
+            )
+
+            created_rows.append({
+                "serial_no": 1,
+                "uin_no": ", ".join(uin_list),
+                "quantity": quantity,
+                "rate_per_unit": float(rate_per_unit),
+                "total_amount": float(base_amount),
+                "total_taxable_amount":float(base_amount),
+                "cgst": float(cgst),
+                "sgst": float(sgst),
+                "igst": float(igst),
+                "total_invoice_amount":float(total_invoice_amount),
+                "invoice_status": invoice.invoice_status,
+                # "total_invoice_status":invoice.total_invoice_status,
+                "invoice_id":invoice.id,
+            })
+
+        # ---------------- ACCESSORY INVOICE ----------------
+        elif invoice_for == 'accessory':
+            existing = InvoiceDetails.objects.filter(
+                customer=customer, invoice_type="accessory", invoice_status=1, payment__drone_order_id=drone_order_id
+            ).first()
+            if existing:
+                return JsonResponse({
+                    "message": "Accessory invoice already exists.",
+                    "invoice_number": existing.invoice_number,
+                    "invoice_status":existing.invoice_status,
+                    "invoice_id":existing.id,
+                    "uni_no":existing.uin_no,
+                    "total_invoice_status":existing.total_invoice_status,
+                }, status=200)
+            
+
+            drones = CompanyDroneModelInfo.objects.filter(uin_number__in=uin_list)
+            drone_model_ids = [d.id for d in drones]
+            drone_count = len(uin_list)
+
+            accessories = [
+                {"description": "Batteries (8 Nos)", "qty": 4 * drone_count, "rate": Decimal('29000'), "hsn": "8806", "uom": "Set"},
+                {"description": "DG Set", "qty": 1 * drone_count, "rate": Decimal('110000'), "hsn": "8502", "uom": "No"},
+                {"description": "Water Tank", "qty": 1 * drone_count, "rate": Decimal('6627'), "hsn": "3925", "uom": "No"},
+            ]
+
+            total_taxable_amount = sum(x['qty'] * x['rate'] for x in accessories)
+            gst_amount = total_taxable_amount * Decimal('0.18')
+            cgst = sgst = gst_amount / 2 if is_intrastate else Decimal('0')
+            igst = gst_amount if not is_intrastate else Decimal('0')
+            total_invoice_amount = total_taxable_amount + cgst + sgst + igst
+            rounded_amount = int(round(total_invoice_amount))
+            total_in_words = num2words(rounded_amount, lang='en_IN').title() + " Rupees Only"
+
+            serial_no = 1
+            created_rows = []
+            created_invoice_objs = []
+
+            for item in accessories:
+                line_total = item['qty'] * item['rate']
+                invoice = InvoiceDetails.objects.create(
+                    customer=customer,
+                    customer_more=customer_more,
+                    admin=admin,
+                    payment=payment,
+                    drone_model_ids=drone_model_ids,
+                    invoice_number=invoice_number,
+                    serial_no=serial_no,
+                    parts_quantity=item['qty'],
+                    hsn_sac_code=item['hsn'],
+                    uom=item['uom'],
+                    rate_per_unit=item['rate'],
+                    total_amount=line_total,
+                    cgst=cgst,
+                    sgst=sgst,
+                    igst=igst,
+                    total_taxable_amount=total_taxable_amount,
+                    total_invoice_amount=total_invoice_amount,
+                    total_invoice_amount_words=total_in_words,
+                    address_type=address_type,
+                    description=item['description'],
+                    uin_no=", ".join(uin_list),
+                    invoice_type="accessory",
+                    invoice_status=0
+                )
+                created_invoice_objs.append(invoice)
+                created_rows.append({
+                    "serial_no": serial_no,
+                    "description": item['description'],
+                    "quantity": item['qty'],
+                    "rate_per_unit": float(item['rate']),
+                    "total_amount": float(line_total),
+                    "cgst": float(cgst),
+                    "sgst": float(sgst),
+                    "igst": float(igst),
+                    # "invoice_status": 0,
+                    "total_taxable_amount": float(total_taxable_amount),
+                    "total_invoice_amount": float(total_invoice_amount),
+                    "invoice_id": invoice.id,
+                    "invoice_status": invoice.invoice_status,
+                    # "total_invoice_status":invoice.total_invoice_status
+                })
+                serial_no += 1
+
+            if len(created_invoice_objs) == 3:
+                for inv in created_invoice_objs:
+                    inv.invoice_status = 1
+                    inv.save()
+                for row in created_rows:
+                    row["invoice_status"] = 1
+
+        # ---------------- RETURN ----------------
+        # ---------------- CHECK AND UPDATE TOTAL INVOICE STATUS ----------------
+        if uin_list:
+            for uin in uin_list:
+                all_types = ['drone', 'amc', 'accessory']
+                invoice_statuses = InvoiceDetails.objects.filter(
+                    uin_no__icontains=uin,
+                    invoice_type__in=all_types,
+                    invoice_status=1
+                ).values_list('invoice_type', flat=True).distinct()
+
+                if set(invoice_statuses) == set(all_types):
+                    InvoiceDetails.objects.filter(
+                        uin_no__icontains=uin,
+                        invoice_type__in=all_types
+                    ).update(total_invoice_status=1)
+         # Check if all UINs of this drone_order_id are fully invoiced, then send mail
+        try:
+            all_invoices = InvoiceDetails.objects.filter(
+                customer=customer,
+                payment__drone_order_id=drone_order_id
+            )
+
+            uin_set = set()
+            for inv in all_invoices:
+                uins = [x.strip() for x in inv.uin_no.split(",") if x.strip()]
+                uin_set.update(uins)
+
+            eligible_uins = []
+            for uin in uin_set:
+                completed_types = InvoiceDetails.objects.filter(
+                    uin_no__icontains=uin,
+                    invoice_type__in=['drone', 'amc', 'accessory'],
+                    total_invoice_status=1
+                ).values_list('invoice_type', flat=True).distinct()
+
+                if set(completed_types) == {'drone', 'amc', 'accessory'}:
+                    eligible_uins.append(uin)
+
+            if set(uin_set) == set(eligible_uins):
+                completed_invoices = InvoiceDetails.objects.filter(
+                    customer=customer,
+                    payment__drone_order_id=drone_order_id,
+                    invoice_type__in=['drone', 'amc', 'accessory'],
+                    total_invoice_status=1
+                ).order_by('serial_no')
+                template_map = {
+                    "drone": "invoice_1.html",
+                    "amc": "invoice_2.html",
+                    "accessory": "invoice_3.html"
+                }
+                pdf_attachments = []
+                for inv in completed_invoices:
+                    template_name = template_map.get(inv.invoice_type, "invoice_1.html")
+                    address = get_customer_address(customer.id, inv.address_type)
+                    context = {
+                        "invoice_type": inv.invoice_type.title(),
+                        "invoice_number": inv.invoice_number,
+                        "invoice_date": inv.created_at.strftime("%Y-%m-%d"),
+                        "invoice_status": inv.invoice_status,
+                        "serial_no": inv.serial_no,
+                        "description": inv.description,
+                        "parts_quantity": inv.parts_quantity,
+                        "rate_per_unit": float(inv.rate_per_unit),
+                        "hsn_sac_code": inv.hsn_sac_code,
+                        "uom": inv.uom,
+                        "total_amount": float(inv.total_amount),
+                        "cgst": float(inv.cgst),
+                        "sgst": float(inv.sgst),
+                        "igst": float(inv.igst),
+                        "total_taxable_amount": float(inv.total_taxable_amount),
+                        "total_invoice_amount": float(inv.total_invoice_amount),
+                        "total_invoice_amount_words": inv.total_invoice_amount_words,
+                        "uin_no": inv.uin_no,
+                        "address_type": inv.address_type,
+                        "customer": {
+                            "id": customer.id,
+                            "full_name": customer.kyc.pan_name if hasattr(customer, 'kyc') and customer.kyc else "Customer",
+                            "name": f"{customer.first_name} {customer.last_name}",
+                            "email": customer.email,
+                            "mobile_no": customer.mobile_no,
+                        },
+                        "address": address,
+                        "payment": {
+                            "id": inv.payment.id,
+                            "amount": float(inv.payment.amount),
+                            "total_amount": float(inv.payment.total_amount),
+                            "quantity": inv.payment.quantity,
+                            "drone_order_id": inv.payment.drone_order_id,
+                            "payment_status": inv.payment.payment_status,
+                            "drone_payment_status": inv.payment.drone_payment_status,
+                            "payment_type": inv.payment.payment_type,
+                            "payment_mode": inv.payment.payment_mode,
+                            "created_at": localtime(inv.payment.created_at).strftime("%Y-%m-%d"),
+                        }
+                    }
+                 
+                    # template_name = template_map.get(inv.invoice_type, "invoice_1.html")
+
+                    pdf_file = generate_receipt_pdf(context, template_name)
+
+                    pdf_attachments.append({
+                        "filename": f"{inv.invoice_type.title()}_Invoice_{inv.invoice_number}.pdf",
+                        "file": pdf_file
+                    })
+
+                send_invoice_bundle_email(customer, pdf_attachments)
+        except Exception as e:
+            print("Error while checking total invoice status for email:", e)
+
+        return JsonResponse({
+            "message": f"{invoice_for.title()} invoice created successfully",
+            "invoice_number": invoice_number,
+            "total_invoice_amount": float(total_invoice_amount),
+            "total_invoice_amount_words": total_in_words,
+            "total_invoice_status": invoice.total_invoice_status,
+            "rows": created_rows,
+        }, status=201)
+
+    except CustomerRegister.DoesNotExist:
+        return JsonResponse({'error': 'Customer not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+def send_invoice_bundle_email(customer, attachments):
+    subject = "All Invoices from Pavaman Aviation"
+    text_content = f"Dear {customer.full_name},\n\nPlease find attached all invoices for your drone order."
+
+    html_content = f"""
+    <p>Dear {customer.full_name},</p>
+    <p>Thank you for completing your purchase with Pavaman Aviation. All three invoices (Drone, AMC, and Accessories) are attached below.</p>
+    <p>If you have any questions, please contact support@pavaman.com.</p>
+    <p>Regards,<br>Pavaman Aviation</p>
+    """
+
+    email_message = EmailMultiAlternatives(
+        subject,
+        text_content,
+        settings.DEFAULT_FROM_EMAIL,
+        [customer.email]
+    )
+    email_message.attach_alternative(html_content, "text/html")
+
+    for attachment in attachments:
+        email_message.attach(attachment["filename"], attachment["file"].read(), 'application/pdf')
+
+    email_message.send()
+
+@csrf_exempt 
+def get_invoice_details(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+
+    customer_id = data.get('customer_id')
+    invoice_id = data.get('invoice_id')
+
+    if not customer_id:
+        return JsonResponse({'error': 'Unauthorized, session expired or not logged in'}, status=401)
+
+    if not invoice_id:
+        return JsonResponse({'error': 'invoice_id is required'}, status=400)
+
+    try:
+        invoice = InvoiceDetails.objects.select_related(
+            'customer', 'customer_more', 'payment', 'drone_model', 'admin'
+        ).get(id=invoice_id)
+
+        if str(invoice.customer.id) != str(customer_id):
+            return JsonResponse({'error': 'You are not authorized to view this invoice'}, status=403)
+
+        customer = invoice.customer
+        customer_more = invoice.customer_more
+        payment = invoice.payment
+        drone_model = invoice.drone_model
+        admin = invoice.admin
+        address =get_customer_address(customer_id, invoice.address_type)
+
+        return JsonResponse({
+            "invoice": {
+                "id": invoice.id,
+                "invoice_number": invoice.invoice_number,
+                "invoice_date": localtime(invoice.created_at).strftime("%Y-%m-%d"),
+                "invoice_status": invoice.invoice_status,
+                "invoice_type": invoice.invoice_type,
+                "description": invoice.description,
+                "parts_quantity": invoice.parts_quantity,
+                "rate_per_unit": float(invoice.rate_per_unit),
+                "hsn_sac_code": invoice.hsn_sac_code,
+                "uom": invoice.uom,
+                "total_amount": float(invoice.total_amount),
+                "cgst": float(invoice.cgst),
+                "sgst": float(invoice.sgst),
+                "igst": float(invoice.igst),
+                "total_taxable_amount": float(invoice.total_taxable_amount),
+                "total_invoice_amount": float(invoice.total_invoice_amount),
+                "total_invoice_amount_words": invoice.total_invoice_amount_words,
+                "uin_no": invoice.uin_no,
+                "address_type": invoice.address_type,
+            },
+            "customer": {
+                "id": customer.id,
+                "name": f"{customer.first_name} {customer.last_name}",
+                "email": customer.email,
+                "mobile_no": customer.mobile_no,
+            } if customer else None,
+            "address": address,
+            "payment": {
+                "id": payment.id,
+                "amount": float(payment.amount),
+                "total_amount": float(payment.total_amount),
+                "quantity": payment.quantity,
+                "drone_order_id": payment.drone_order_id,
+                "payment_status": payment.payment_status,
+                "drone_payment_status": payment.drone_payment_status,
+                "payment_type": payment.payment_type,
+                "created_at": localtime(payment.created_at).strftime("%Y-%m-%d"),
+            } if payment else None,
+            "drone_model": {
+                "id": drone_model.id,
+                "uin_number": drone_model.uin_number,
+                "assign_status": drone_model.assign_status,
+            } if drone_model else None,
+          
+        }, status=200)
+
+    except InvoiceDetails.DoesNotExist:
+        return JsonResponse({'error': 'Invoice not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+def get_customer_address(customer_id, address_type="permanent"):
+    try:
+        more_details = CustomerMoreDetails.objects.get(customer_id=customer_id)
+
+        if address_type == "permanent":
+            return {
+                "address": more_details.address,
+                "district": more_details.district,
+                "mandal": more_details.mandal,
+                "city": more_details.city,
+                "state": more_details.state,
+                "country": more_details.country,
+                "pincode": more_details.pincode,
+            }
+
+        elif address_type == "present":
+            if more_details.same_address:
+                # Use permanent details
+                return {
+                    "address": more_details.address,
+                    "district": more_details.district,
+                    "mandal": more_details.mandal,
+                    "city": more_details.city,
+                    "state": more_details.state,
+                    "country": more_details.country,
+                    "pincode": more_details.pincode,
+                }
+            else:
+                # Use present details
+                return {
+                    "address": more_details.present_address,
+                    "district": more_details.present_district,
+                    "mandal": more_details.present_mandal,
+                    "city": more_details.present_city,
+                    "state": more_details.present_state,
+                    "country": more_details.present_country,
+                    "pincode": more_details.present_pincode,
+                }
+
+        return None
+
+    except CustomerMoreDetails.DoesNotExist:
+        return None
+  

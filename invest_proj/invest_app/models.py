@@ -190,6 +190,50 @@ class PaymentDetails(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     payment_status= models.IntegerField(default=0)
     status=models.IntegerField(default=1)
+    
+from django.db.models import JSONField
+class InvoiceDetails(models.Model):
+    customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+    customer_more = models.ForeignKey(CustomerMoreDetails, on_delete=models.CASCADE, null=True, blank=True)
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
+    # role= models.ForeignKey('Role', on_delete=models.CASCADE, null=True, blank=True)
+    drone_model_ids = models.JSONField(default=list, blank=True, null=True)
+
+    payment= models.ForeignKey(PaymentDetails, on_delete=models.CASCADE, null=True, blank=True)   
+    serial_no=models.IntegerField(default=1)
+    invoice_number = models.CharField(max_length=50)
+    uin_no = models.CharField(max_length=100, null=True, blank=True)  # UIN number of the drone 
+    parts_quantity = models.IntegerField(default=1)
+    hsn_sac_code = models.CharField(max_length=20, null=True, blank=True)
+    uom = models.CharField(max_length=20, null=True, blank=True)  # Unit of Measure
+    rate_per_unit = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    cgst= models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    sgst= models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    igst= models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    total_taxable_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    total_invoice_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.0)
+    total_invoice_amount_words = models.CharField(max_length=255,default="")
+    address_type = models.CharField(
+        max_length=10,
+        choices=(
+            ('permanent', 'Permanent Address'),
+            ('present', 'Present Address'),
+        ),
+        default='permanent'
+    )
+    description = models.TextField(max_length=255, default='TEJA-S (UIN Drone)')
+    invoice_type = models.CharField(choices=(('drone', 'Drone'),
+                                              ('accessory', 'Accessory'),
+                                              ('amc', 'AMC')
+                                              ), max_length=20, default='drone')
+    invoice_status=models.IntegerField(default=0) 
+    total_invoice_status=models.IntegerField(default=0)
+    status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Invoice {self.invoice_number} for {self.customer.email}" if self.customer else "Drone Invoice"
 class Permission(models.Model):
     model_name = models.CharField(max_length=100)
     can_add = models.BooleanField(default=False)

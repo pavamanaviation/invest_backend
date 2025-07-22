@@ -21,11 +21,12 @@ from invest_app.views import (add_role, view_kyc_doc,view_roles,delete_role,upda
 verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details,upload_drone_models,view_drone_models_by_admin)
 
 # from invest_app.views import check_indian_time 
-from invest_app.customer_views import (create_drone_installment_order, customer_register, get_pan_verification_status, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
+from invest_app.customer_views import (create_amc_invoice, create_drone_installment_order, customer_register, get_pan_verification_status, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
 customer_login,verify_pan_document,get_pan_source_verification_status,get_aadhar_verification_status,
 bank_account_verification_view,customer_more_details,customer_profile_view,create_drone_installment_order,
 upload_pdf_document,create_drone_order,razorpay_callback,payment_status_check,preview_customer_details,
-completed_status,stage_nominees, verify_nominee, save_staged_nominees,
+completed_status,stage_nominees, verify_nominee, save_staged_nominees,create_invoice,get_invoice_details,create_accessory_invoice,
+create_invoice_combined
 )
 
 from invest_app.role_views import (get_all_models_by_role,get_models_data_by_role)
@@ -76,8 +77,17 @@ urlpatterns = [
     path('razorpay-callback', razorpay_callback, name='razorpay_callback'),
     path('create-drone-installment-order', create_drone_installment_order, name='create_drone_installment_order'),
     path('payment-status-check', payment_status_check, name='payment_status_check'),
+     # 3. Admin Manual Reconciliation
+    # path('reconcile-payment/', reconcile_payment, name='reconcile_payment'),
+    
     path('completed-status', completed_status, name='completed_status'),
 
+
+    path('create-invoice', create_invoice, name='create_invoice'),
+    path('get-invoice-details',get_invoice_details,name='get_invoice_details'),
+    path('create-accessory-invoice',create_accessory_invoice,name='create_accessory_invoice'),
+    path('create-amc-invoice',create_amc_invoice,name="create_amc_invoice"),
+    path('create-invoice-combined',create_invoice_combined,name='create_invoice_combined'),
     #role urls
     path('get-models-names',get_all_models_by_role,name='get_all_models_by_role'),
     path('get-details',get_models_data_by_role,name='get_models_data_by_role'),

@@ -88,6 +88,8 @@ urlpatterns = [
     path('create-accessory-invoice',create_accessory_invoice,name='create_accessory_invoice'),
     path('create-amc-invoice',create_amc_invoice,name="create_amc_invoice"),
     path('create-invoice-combined',create_invoice_combined,name='create_invoice_combined'),
+    
+    
     #role urls
     path('get-models-names',get_all_models_by_role,name='get_all_models_by_role'),
     path('get-details',get_models_data_by_role,name='get_models_data_by_role'),

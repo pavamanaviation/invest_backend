@@ -1166,6 +1166,7 @@ def get_pan_source_verification_status(request):
         import traceback
         traceback.print_exc()
         return JsonResponse({'error': str(e)}, status=500)
+    
 
 # @csrf_exempt
 # def get_pan_verification_status(request):

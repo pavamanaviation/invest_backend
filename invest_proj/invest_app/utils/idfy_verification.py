@@ -1,6 +1,5 @@
 from invest_app.utils.shared_imports import *
 
-
 def get_idfy_headers():
     return {
         "Content-Type": "application/json",

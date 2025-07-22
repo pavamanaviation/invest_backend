@@ -28,7 +28,6 @@ s3transfer==0.13.0
 setuptools==80.9.0
 six==1.17.0
 sqlparse==0.5.3
-twilio==9.6.2
 tzdata==2025.2
 urllib3==2.4.0
 yarl==1.20.0

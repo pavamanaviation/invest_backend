@@ -1877,14 +1877,13 @@ def create_drone_order(request):
         return JsonResponse({'error': str(e)}, status=500)
 
 #combine status 
-#    
 @customer_login_required
 @csrf_exempt
 def payment_status_check(request):
     try:
         data = json.loads(request.body)
-        customer_id=data.get("customer_id") or request.session.get("customer_id")
-        # customer_id = request.session.get("customer_id")
+        # customer_id=data.get("customer_id") or request.session.get("customer_id")
+        customer_id = request.session.get("customer_id")
         payment_type = data.get("payment_type", "installment")
         drone_order_id = data.get("drone_order_id")
 
@@ -3278,8 +3277,8 @@ def create_invoice_combined(request):
 
     try:
         data = json.loads(request.body)
-        customer_id=data.get('customer_id')
-        # customer_id = request.session.get('customer_id')
+        # customer_id=data.get('customer_id')
+        customer_id = request.session.get('customer_id')
         if not customer_id:
             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
 
@@ -3789,15 +3788,15 @@ def send_invoice_bundle_email(customer, attachments):
         email_message.attach(attachment["filename"], attachment["file"].read(), 'application/pdf')
 
     email_message.send()
-# @customer_login_required
+@customer_login_required
 @csrf_exempt
 def view_invoices(request):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST allowed"}, status=405)
     try:
         data = json.loads(request.body)
-        customer_id = data.get("customer_id")       
-        # customer_id = request.session.get('customer_id')
+        # customer_id = data.get("customer_id")       
+        customer_id = request.session.get('customer_id')
         if not customer_id:
             return JsonResponse({"error": "Unauthorized"}, status=403)
 
@@ -3821,17 +3820,18 @@ def view_invoices(request):
         return JsonResponse({"error": "Customer not found"}, status=404)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
+@customer_login_required
 @csrf_exempt
 def view_installment_receipt(request):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST method allowed"}, status=405)
     try:
         data = json.loads(request.body)
-        customer_id = data.get("customer_id")
+        # customer_id = data.get("customer_id")
+        customer_id = request.session.get('customer_id')
 
         if not customer_id:
-            return JsonResponse({"error": "customer_id is required as GET parameter"}, status=400)
-
+            return JsonResponse({"error": "Unauthorized, session expired or not logged in"}, status=401)
         payments = PaymentDetails.objects.filter(
             customer_id=customer_id,
             drone_payment_status='captured',
@@ -3864,6 +3864,7 @@ def view_installment_receipt(request):
     except Exception as e:
         print("View Customer Receipt Error:", str(e))
         return JsonResponse({"error": str(e)}, status=500)
+@customer_login_required
 @csrf_exempt
 def payment_history(request):
     if request.method != "POST":
@@ -3871,10 +3872,10 @@ def payment_history(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = data.get("customer_id")
-
+        # customer_id = data.get("customer_id")
+        customer_id = request.session.get('customer_id')
         if not customer_id:
-            return JsonResponse({"error": "customer_id is required"}, status=400)
+            return JsonResponse({"error": "Unauthorized, session expired or not logged in"}, status=401)
 
         payments = PaymentDetails.objects.filter(customer_id=customer_id).order_by("-id")
 

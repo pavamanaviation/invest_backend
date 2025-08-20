@@ -1,7 +1,5 @@
-
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8" />
     <title>Drone Lease Agreement</title>
@@ -37,7 +35,7 @@
         }
 
         .section-title {
-            background-color: #d9f0d9;
+            background-color: #e5e2e2;
             font-weight: bold;
             padding: 5px 10px;
             margin-top: 20px;
@@ -82,45 +80,44 @@
         }
     </style>
 </head>
-
 <body>
 
-    <div class="header">DRONE LEASE AGREEMENT</div>
+<div class="header">DRONE LEASE AGREEMENT</div>
 
-    <table class="info-table">
-        <tr>
-            <td><strong>Agreement No:</strong> ____________</td>
-            <td><strong>Date:</strong> ____________</td>
-        </tr>
-    </table>
+<table class="info-table">
+    <tr>
+        <td><strong>Agreement No:</strong> {{ preview.agreement_no }}</td>
+        <td><strong>Date:</strong> {{ preview.agreement_date }}</td>
+    </tr>
+</table>
 
-    <p>This Drone Lease Agreement is executed on this ________ day of ___________, 202__ by and between:</p>
+<p>This Drone Lease Agreement is executed on this {{ preview.agreement_day }} day of {{ preview.agreement_month }}, {{ preview.agreement_year_full }} by and between:</p>
 
-    <p>
-        <strong>Mr./Ms. ___________</strong>, Son/Wife/Daughter of ___________, aged about ________ years, resident of
-        ___________,
-        (PAN: _______________________________) (Aadhaar No.: ___________________________) (hereinafter called the “<strong>Lessor</strong>”).
-    </p>
+<p>
+    <strong>Mr./Ms. {{ lessor.name }}</strong>, Son/Wife/Daughter of <strong>{{ lessor.guardian_name }}</strong>,
+    aged about {{ lessor.age }} years, resident of {{ lessor.resident_of }},
+    (PAN: {{ lessor.pan_number }}) (Aadhaar No.: {{ lessor.aadhaar_number }})
+    (hereinafter called the <strong>“Lessor”</strong>).
+</p>
 
-    <p>And</p>
+<p>And</p>
 
-    <p>
-        <strong>Pavaman Agri Ventures Pvt Ltd</strong>, CIN: U01100TG2022PTC159856, having registered office at 2nd
-        Floor, Kapil Kavuri Hub, Nanakramguda, Seri Lingampally, Telangana, India – 500032, represented by its
-        Authorised Representative (hereinafter called the “<strong>Lessee</strong>”).
-    </p>
+<p>
+    <strong>Pavaman Agri Ventures Pvt Ltd</strong>, CIN: U01100TG2022PTC159856,
+    having registered office at 2nd Floor, Kapil Kavuri Hub, Nanakramguda, Seri Lingampally, Telangana – 500032,
+    represented by its Authorised Representative (hereinafter called the <strong>“Lessee”</strong>).
+</p>
 
-    <div class="clause">
-        The Lessor has purchased the drone(s) with accessories from Pavaman Aviation Pvt Ltd and hereby leases the same
-        to the Lessee for maintenance, operation, and management, under the terms listed below.
-    </div>
+<div class="clause">
+    The Lessor has purchased the drone(s) with accessories from Pavaman Aviation Pvt Ltd and hereby leases the same
+    to the Lessee for maintenance, operation, and management, under the terms listed below.
+</div>
 
-    <div class="section-title">1. Period</div>
-    <div class="clause">
-        The lease shall be for a period of 66 months, commencing from ____________ to ____________.
-    </div>
-
-    <div class="section-title">2. Rental</div>
+<div class="section-title">1. Period</div>
+<div class="clause">
+    The lease shall be for a period of 66 months, commencing from {{ preview.from_date }} to {{ preview.to_date }}.
+</div>
+ <div class="section-title">2. Rental</div>
     <div class="clause">
         The Lessee shall pay:
         <ul>
@@ -166,74 +163,62 @@
         Conciliation Act, 1996. Jurisdiction: Rangareddy District Courts.
     </div>
 
-    <div class="section-title">SCHEDULE</div>
-    <div class="clause">
-        The Lessor has purchased ______ Drone(s) with payload capacity up to 25kg, including ten batteries, water
-        container, and generator through Invoice No: ____________, Dated: ____________, Amount: ____________ from
-        Pavaman Aviation Pvt Ltd. Drone Unique Code(s): ____________
-    </div>
+<div class="section-title">SCHEDULE</div>
+<div class="clause">
+    The Lessor has purchased {{ preview.drone_name }} Drone(s) through Invoice No: {{ preview.invoice_number_str }},
+    Dated: {{ preview.invoice_date_str }}, Amount: ₹{{ preview.total_invoice_amount }}
+    from Pavaman Aviation Pvt Ltd. Drone Unique Code(s): {{ preview.drone_unique_code }}
+</div>
 
-    <div class="section-title">WITNESS</div>
-    <p><strong>Lessor:</strong> ______________________</p>
-    <p><strong>Lessee:</strong> ______________________</p>
-    <div style="page-break-before: always;"></div>
-    <div class="section-title">ANNEXURE – LEASE PAYMENT DETAILS</div>
-    <div class="clause">
-        <strong>Account Details:</strong><br>
-        a) Account No: ____________________<br>
-        b) Name of Account Holder: ____________________<br>
-        c) Name of Bank: ____________________<br>
-        d) IFSC Code: ____________________<br>
-    </div>
+<div class="section-title">Bank Details</div>
+<div class="clause">
+    a) Account No: {{ bank_details.account_number }}<br>
+    b) Name of Account Holder: {{ bank_details.account_holder_name }}<br>
+    c) Name of Bank: {{ bank_details.bank_name }}<br>
+    d) IFSC Code: {{ bank_details.ifsc_code }}
+</div>
 
-    <div class="section-title">DETAILS OF NOMINEE</div>
-    <table class="nominee-table">
-        <tr>
-            <th>S. No.</th>
-            <th>Name</th>
-            <th>Relationship</th>
-            <th>Address</th>
-            <th>Proportionate %</th>
-        </tr>
-        <tr>
-            <td>1</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-        </tr>
-        <tr>
-            <td>2</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-        </tr>
-        <tr>
-            <td>3</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-        </tr>
-        <tr>
-            <td>4</td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-        </tr>
-    </table>
+<div class="section-title">Details of Nominee</div>
+<table class="nominee-table">
+    <tr>
+        <th>S. No.</th>
+        <th>Name</th>
+        <th>Relationship</th>
+        <th>Address</th>
+        <th>Proportionate %</th>
+    </tr>
+    {% for nominee in nominees %}
+    <tr>
+        <td>{{ nominee.sno }}</td>
+        <td>{{ nominee.nominee_name }}</td>
+        <td>{{ nominee.nominee_relation }}</td>
+        <td>{{ nominee.nominee_address }}</td>
+        <td>{{ nominee.nominee_share }}</td>
+    </tr>
+    {% empty %}
+    <tr>
+        <td colspan="5">No Nominees Available</td>
+    </tr>
+    {% endfor %}
+</table>
 
-    <div class="signature-section">
-        <div class="signature-box">
-            <strong>_________________________<br>Lessor</strong>
-        </div>
-        <div class="signature-box">
-            <strong>_________________________<br>Authorised Signatory<br>For Pavaman Agri Ventures Pvt Ltd</strong><br>
-            <img src="https://your-bucket.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png" class="logo" />
-        </div>
+<div class="signature-section">
+    <div class="signature-box">
+      {% if lessor.signature_url %}
+<img src="{{ lessor.signature_url }}" alt="Lessor Signature"
+     >
+{% else %}
+<span>No signature available</span>
+{% endif %}
+
+        <br><strong>_________________________<br>Lessor</strong>
     </div>
+    <div class="signature-box">
+        <img src="{{ company_details.signature }}" style="width: 150px;"><br>
+        <img src="{{ company_details.stamp }}" style="width: 120px;">
+        <br><strong>_________________________<br>Authorised Signatory</strong>
+    </div>
+</div>
 
 </body>
 </html>

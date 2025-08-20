@@ -151,6 +151,9 @@ class CustomerMoreDetails(models.Model):
     signature_status=models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     status=models.IntegerField(default=1)
+    guardian_name = models.CharField(max_length=100, null=True, blank=True)
+    guardian_relation = models.CharField(max_length=50, null=True, blank=True)
+
     def __str__(self):
         return f"More Details for {self.customer.email}" if self.customer else "Customer More Details"
 
@@ -170,6 +173,8 @@ class NomineeDetails(models.Model):
     nominee_status= models.IntegerField(default=0)
     status=models.IntegerField(default=1)
     share=models.FloatField(default=0.0)
+    address=models.TextField(null=True, blank=True)
+
     def __str__(self):
         return f"Nominee for {self.customer.email}" if self.customer else "Nominee Details"
     
@@ -243,3 +248,28 @@ class Permission(models.Model):
     role = models.ForeignKey(Role, on_delete=models.CASCADE)
     admin = models.ForeignKey(Admin, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class AgreementDetails(models.Model):
+    agreement_no = models.CharField(max_length=100)
+    agreement_date = models.DateField()
+    agreement_day = models.CharField(max_length=50)
+    agreement_month = models.CharField(max_length=50)
+    agreement_year_full = models.IntegerField()
+    agreement_year_short = models.CharField(max_length=50)
+    from_date = models.DateField()
+    to_date = models.DateField()
+    drone_name = models.CharField(max_length=100)
+    drone_unique_code = models.CharField(max_length=100)
+    invoice_number = models.CharField(max_length=100)
+    invoice_date = models.DateField()
+    witness_leassor = models.CharField(max_length=100)
+    witness_lessee = models.CharField(max_length=100)
+    customer = models.ForeignKey('CustomerRegister', on_delete=models.CASCADE)
+    customer_more = models.ForeignKey('CustomerMoreDetails', on_delete=models.CASCADE, null=True, blank=True)
+    admin = models.ForeignKey('Admin', on_delete=models.CASCADE, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    status = models.IntegerField(default=1)  # 1 = Active, 0 = Inactive
+
+    def __str__(self):
+        return f"Agreement {self.agreement_no}"

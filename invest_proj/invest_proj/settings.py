@@ -259,7 +259,7 @@ MSG91_FLOW_ID_RESETPASSWORD = config('MSG91_FLOW_ID_RESETPASSWORD')
 MSG91_FLOW_ID_MOILE_VERIFY = config('MSG91_FLOW_ID_MOILE_VERIFY')
 
 # Session will expire after 1 hour (3600 seconds)
-SESSION_COOKIE_AGE = 3600  # 1 hour in seconds
+SESSION_COOKIE_AGE = 360000  # 1 hour in seconds
 SESSION_SAVE_EVERY_REQUEST = True
 SESSION_COOKIE_SECURE = False      # Only send session cookies over HTTPS
 SESSION_COOKIE_HTTPONLY = True    # Prevent JavaScript access to the session cookie

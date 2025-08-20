@@ -49,14 +49,16 @@ def submit_idfy_pan_verification(name, dob, pan_number):
 
     headers = {
         "Content-Type": "application/json",
-        "account-id": "e351a415009f/ebd20862-8dc6-421e-bd1c-0480a19485dc",
-        "api-key": "082618e6-1a00-4d5d-aefb-12f466fa4494"
+        "account-id": settings.IDFY_ACCOUNT_ID,
+        "api-key": settings.IDFY_API_KEY,
+
     }
 
     task_id = str(uuid.uuid4())
     payload = {
         "task_id": task_id,
-        "group_id": "8e16424a-58fc-4ba4-ab20-5bc8e7c3c41e",
+        # "group_id": "8e16424a-58fc-4ba4-ab20-5bc8e7c3c41e",
+        "group_id": settings.IDFY_GROUP_ID,
         "data": {
             "id_number": pan_number,
             "full_name": name,

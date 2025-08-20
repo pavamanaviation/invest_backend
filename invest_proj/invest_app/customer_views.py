@@ -4,9 +4,10 @@ import string
 
 import num2words
 from invest_app.utils.shared_imports import *
-from invest_app.utils.sessions import customer_login_required 
+from invest_app.utils.sessions import customer_login_required
+from invest_app.utils.indiantime import format_datetime_ist 
 from .models import (Admin, CompanyDroneModelInfo, CustomerRegister,
- InvoiceDetails,PaymentDetails, KYCDetails, CustomerMoreDetails, NomineeDetails, Role,)
+ InvoiceDetails,PaymentDetails, KYCDetails, CustomerMoreDetails, NomineeDetails, Role,AgreementDetails)
 from invest_app.utils.msg91 import send_bulk_sms
 from invest_app.utils.idfy_verification import (
     verify_aadhar_sync,
@@ -27,7 +28,7 @@ from django.utils import timezone
 from datetime import date
 from django.utils.timezone import localtime
 from num2words import num2words
-
+from dateutil.relativedelta import relativedelta
 # --------------
 def get_indian_time():
     india_tz = pytz.timezone('Asia/Kolkata')
@@ -370,6 +371,7 @@ def customer_register_sec_phase(request):
 
         return JsonResponse({
             "message": "OTP sent. Please verify to complete your profile. The OTP is valid for 2 minutes.",
+            "otp":otp,
             "customer_id": customer.id,
             "status_code": 200,
         }, status=200)
@@ -466,6 +468,8 @@ def send_and_store_otp(user, name, email=None, mobile_no=None):
     otp = generate_otp()
     user.otp = otp
     user.changed_on = timezone.now()
+    print(user.otp)
+    print(otp)
 
     if hasattr(user, 'otp_send_type'):
         user.otp_send_type = 'email' if email else 'mobile'
@@ -578,12 +582,13 @@ def customer_login(request):
                         user_id = user.id
                         full_name = f"{user.first_name} {user.last_name}".strip()
                         send_and_store_otp(user, full_name, email, mobile_no)
+                    
         if user:
             return JsonResponse({
                 "message": "OTP sent. It is valid for 2 minutes.",
                 "user_type": user_type,
                 "user_id": user_id,
-                "status_code": 200
+                "status_code": 200,
             }, status=200)
 
         return JsonResponse({"error": "Account not found or not verified."}, status=404)
@@ -771,8 +776,8 @@ def customer_more_details(request):
         if not customer:
             return JsonResponse({"error": "Customer not found."}, status=404)
 
-        # Prevent saving again if already submitted
-        existing = CustomerMoreDetails.objects.filter(customer=customer).first()
+        # Prevent resubmission
+        existing = CustomerMoreDetails.objects.filter(customer=customer, status=1).order_by('-id').first()
         if existing and existing.personal_status == 1:
             return JsonResponse({
                 "action": "view_only",
@@ -786,8 +791,8 @@ def customer_more_details(request):
                 }
             })
 
-        # Required fields check
-        required_fields = ["designation", "profession", "address", "pincode", "same_address"]
+        # Required fields
+        required_fields = ["designation", "profession", "address", "pincode", "same_address","guardian_name","guardian_relation"]
         for field in required_fields:
             if field not in data:
                 return JsonResponse({"error": f"{field} is required."}, status=400)
@@ -795,7 +800,6 @@ def customer_more_details(request):
         same_address = data.get("same_address", False)
 
         if not same_address:
-            # Require both present and permanent address
             if not data.get("present_address") or not data.get("present_pincode"):
                 return JsonResponse({"error": "present_address and present_pincode are required."}, status=400)
             if not data.get("address") or not data.get("pincode"):
@@ -812,19 +816,16 @@ def customer_more_details(request):
                 "present_state": present_location.get("state", ""),
                 "present_country": present_location.get("country", ""),
                 "present_mandal": present_location.get("block", ""),
-
                 "address": data["address"],
                 "pincode": data["pincode"],
                 "city": permanent_location.get("city", ""),
                 "district": permanent_location.get("district", ""),
                 "state": permanent_location.get("state", ""),
                 "country": permanent_location.get("country", ""),
-                "mandal": permanent_location.get("block", ""),
+                "mandal": permanent_location.get("block", "")
             }
         else:
-            # Use permanent address for both if same_address = True
             location = get_location_by_pincode(data["pincode"]) or {}
-
             address_data = {
                 "present_address": data["address"],
                 "present_pincode": data["pincode"],
@@ -833,7 +834,6 @@ def customer_more_details(request):
                 "present_state": location.get("state", ""),
                 "present_country": location.get("country", ""),
                 "present_mandal": location.get("block", ""),
-
                 "address": data["address"],
                 "pincode": data["pincode"],
                 "city": location.get("city", ""),
@@ -846,10 +846,13 @@ def customer_more_details(request):
         # Save to DB
         more = CustomerMoreDetails.objects.create(
             customer=customer,
+            guardian_name=data["guardian_name"],
+            guardian_relation=data["guardian_relation"],
             same_address=same_address,
             designation=data["designation"],
             profession=data["profession"],
             personal_status=1,
+            status=1,  # Important to fetch correctly later
             **address_data
         )
 
@@ -861,6 +864,8 @@ def customer_more_details(request):
                 "first_name": customer.first_name,
                 "last_name": customer.last_name,
                 "email": customer.email,
+                "guardian_name":more.guardian_name,
+                "guardian_relation":more.guardian_relation,
                 "present_address": more.present_address,
                 "permanent_address": more.address,
                 "same_address": more.same_address,
@@ -881,7 +886,7 @@ def customer_more_details(request):
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: '{str(e)}'"}, status=500)
-
+    
 @customer_login_required
 @csrf_exempt
 def verify_pan_document(request):
@@ -902,24 +907,10 @@ def verify_pan_document(request):
         file_key, file_url, error_response = validate_and_upload_document(pan_file, customer, doc_type='pan')
         if error_response:
             return error_response
-        # file_name = pan_file.name
-        # mime_type, _ = mimetypes.guess_type(file_name)
-        # file_ext = os.path.splitext(file_name)[1].lower()
-
-        # allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png']
-        # allowed_mime_types = ['application/pdf', 'image/jpeg', 'image/png']
-        # if file_ext not in allowed_extensions or mime_type not in allowed_mime_types:
-        #     return JsonResponse({'error': 'Only PDF, JPG, JPEG, PNG files are allowed.'}, status=400)
-
-        # # Generate file key and related info
-        # file_key, customer_name, customer_folder, file_ext = generate_customer_file_key(
-        #     pan_file, customer=customer, doc_type='pan', prefix='customerdoc')
-
-        # # Upload to S3
-        # upload_to_s3(pan_file, file_key)
-        # file_url = generate_presigned_url(file_key, expires_in=300)
-
+    
         status_code, response_json, task_id = submit_idfy_pan_ocr(file_url)
+        print("IDfy OCR response:", response_json)
+
         if status_code not in [200, 202]:
             return JsonResponse({
                 'error': 'Failed to submit to IDfy',
@@ -934,6 +925,7 @@ def verify_pan_document(request):
         for _ in range(5):
             time.sleep(2)
             status_code, result = check_idfy_task_status(task_id)
+            print("Polling OCR result:", result)
             if result.get("status") == "completed":
                 pan_data = result.get("result", {})
 
@@ -975,26 +967,7 @@ def verify_pan_document(request):
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
-# def get_customer_pan_path(customer_id, first_name, last_name):
-#     s3 = boto3.client(
-#         's3',
-#         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-#         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-#         region_name=settings.AWS_S3_REGION_NAME
-#     )
 
-#     bucket_name = settings.AWS_STORAGE_BUCKET_NAME
-#     customer_folder = f'customerdoc/{customer_id}_{first_name.lower()}{last_name.lower()}/'
-
-#     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=customer_folder)
-#     if 'Contents' not in response:
-#         return None
-
-#     for obj in response['Contents']:
-#         key = obj['Key']
-#         if 'pan_' in key.lower():
-#             return key  # Return PAN path
-#     return None
 def get_customer_document_path(customer_id, first_name, last_name, doc_type):
     """
     Fetch the S3 key/path of the specified document type (PAN or Aadhar) for a customer.
@@ -1024,6 +997,7 @@ def get_customer_document_path(customer_id, first_name, last_name, doc_type):
             return key  # Return PAN or Aadhar path
 
     return None
+
 @customer_login_required
 @csrf_exempt
 def get_pan_verification_status(request):
@@ -1064,7 +1038,8 @@ def get_pan_verification_status(request):
         # Submit source verification without file
         verify_status_code, verify_response, verify_task_id, verify_request_id = submit_idfy_pan_verification(
             name=pan_name,
-            dob="1990-01-01",
+            # dob="1990-01-01",
+            dob = extraction.get("date_of_birth") or "1990-01-01",
             pan_number=pan_number
         )
 
@@ -1077,7 +1052,7 @@ def get_pan_verification_status(request):
                 'ocr_data': extraction,
                 'response': verify_response
             }, status=500)
-
+        
         return JsonResponse({
             'status': 'submitted',
             'message': 'Pan number verification started',
@@ -1115,27 +1090,38 @@ def get_pan_source_verification_status(request):
 
         if status != "completed":
             return JsonResponse({'status': 'pending', 'message': 'Source verification still pending'}, status=202)
+        print("🔍 Full raw result from IDfy:", json.dumps(result, indent=2))
 
-        source_output = result.get("result", {}).get("source_output", {})
+        result_data = result.get("result", {})
+        if not result_data:
+            return JsonResponse({
+                "status": "failed",
+                "message": "Missing result from IDfy",
+                "raw_result": result
+            }, status=422)
+
+        source_output = result_data.get("source_output")
+        if not source_output:
+            return JsonResponse({
+                "status": "failed",
+                "message": "Missing source_output from IDfy result",
+                "raw_result": result
+            }, status=422)
+
         name_match = source_output.get("name_match")
         dob_match = source_output.get("dob_match")
         pan_status = source_output.get("pan_status")
+        print("source_output from IDfy:", source_output)
 
         if not (name_match and dob_match and pan_status == "Existing and Valid. PAN is Operative"):
-            # Delete all PAN documents from S3
-            delete_all_kyc_files(customer.id, customer.first_name, customer.last_name, 'pan')
-            return JsonResponse({
-                'status': 'failed',
-                'message': 'Source verification mismatch',
-                'details': source_output,
-                'raw_result': result
-            }, status=422)
 
-        matched_data = {
+            matched_data = {
             "id_number": source_output.get("input_details", {}).get("input_pan_number"),
             "name": source_output.get("input_details", {}).get("input_name"),
             "dob": source_output.get("input_details", {}).get("input_dob")
         }
+            
+
         admin = Admin.objects.only("id").first()
         if not admin:
             return JsonResponse({"error": "Admin not found."}, status=500)
@@ -1168,69 +1154,7 @@ def get_pan_source_verification_status(request):
         return JsonResponse({'error': str(e)}, status=500)
     
 
-# @csrf_exempt
-# def get_pan_verification_status(request):
-#     request_id = request.GET.get('request_id')
-#     customer_id = request.GET.get('customer_id')
 
-#     if not request_id or not customer_id:
-#         return JsonResponse({'error': 'Both request_id and customer_id are required'}, status=400)
-
-#     try:
-#         customer = CustomerRegister.objects.get(id=customer_id)
-#     except CustomerRegister.DoesNotExist:
-#         return JsonResponse({'error': 'Customer not found'}, status=404)
-
-#     try:
-#         customer = CustomerRegister.objects.get(id=customer_id)
-
-#         # Fetch pan_path from S3
-#         pan_path = get_customer_document_path(customer.id, customer.first_name, customer.last_name,'pan')
-
-#         status_code, result = check_idfy_status_by_request_id(request_id)
-#         print("Raw IDfy result:", result)
-
-#         if isinstance(result, list):
-#             if not result:
-#                 return JsonResponse({'error': 'No result found for this request ID'}, status=404)
-#             result = result[0]
-
-#         status = result.get("status")
-#         extraction = result.get("result", {}).get("extraction_output", {})
-
-#         if status == "completed":
-#             KYCDetails.objects.update_or_create(
-#                 customer=customer,
-#                 defaults={
-#                     "pan_number": extraction.get("id_number"),
-#                     "pan_name": extraction.get("name_on_card"),
-#                     "pan_dob": extraction.get("date_of_birth"),
-#                     "pan_task_id": result.get("task_id", ""),
-#                     "pan_group_id": settings.IDFY_GROUP_ID,
-#                     "pan_request_id": request_id,
-#                     "idfy_pan_status": status,
-#                     "pan_status": 1,
-#                     "pan_path": pan_path
-
-#                 }
-#             )
-
-#             return JsonResponse({
-#                 'status': 'completed',
-#                 'result': extraction,
-#                 'message': 'KYC details updated successfully.'
-#             })
-
-#         return JsonResponse({
-#             'status': status,
-#             'result': extraction,
-#             'message': 'PAN verification not yet completed.'
-#         })
-
-#     except Exception as e:
-#         # import traceback
-#         # traceback.print_exc()
-#         return JsonResponse({'error': f'Error fetching status: {str(e)}'}, status=500)
 
 def generate_customer_file_key(file_obj, customer, doc_type='pan', prefix='customerdoc'):
     customer_name = f"{customer.first_name}{customer.last_name}".replace(" ", "").lower()
@@ -1532,6 +1456,14 @@ def bank_account_verification_view(request):
             ""
         ).strip()
 
+        bank_name = (
+            result_data.get("bank_name") or
+            result_data.get("bank") or
+            result_data.get("branch_bank") or
+            result_data.get("bank_details", {}).get("bank_name") or
+            ""
+        ).strip()
+        
         verified = result_data.get("status", "") == "id_found"
         bank_name = result_data.get("bank_name", "") or bank_holder_name
         pan_name = kyc.pan_name.strip() if kyc and kyc.pan_name else ""
@@ -1546,6 +1478,7 @@ def bank_account_verification_view(request):
                 "idfy_bank_status": idfy_bank_status,
                 "raw_response": result
             }, status=400)
+        
 
         # Compare PAN and Bank Holder Name (case-insensitive)
         is_name_matched = pan_name.lower() == bank_holder_name.lower()
@@ -1562,6 +1495,9 @@ def bank_account_verification_view(request):
             }, status=400)
 
         # ✅ Save only if name matched AND IDfy status is 'completed'
+        print("Bank Holder Name:", bank_holder_name)
+        print("Bank Name:", bank_name)
+
         if is_name_matched and idfy_bank_status == "completed":
             KYCDetails.objects.update_or_create(
                 customer=customer,
@@ -1587,7 +1523,8 @@ def bank_account_verification_view(request):
             "bank_holder_name": bank_holder_name,
             "pan_name": pan_name,
             "name_matched": True,
-            "raw_response": result
+            "raw_response": result,
+            "bank_name": bank_name,
         }, status=200)
 
     except Exception as e:
@@ -1606,7 +1543,11 @@ def upload_pdf_document(request):
 
     customer = get_object_or_404(CustomerRegister, id=customer_id)
     kyc, _ = KYCDetails.objects.get_or_create(customer=customer)
-    more, _ = CustomerMoreDetails.objects.get_or_create(customer=customer)
+    # more, _ = CustomerMoreDetails.objects.get_or_create(customer=customer)
+    more = CustomerMoreDetails.objects.filter(customer=customer, status=1).order_by('-id').first()
+    if not more:
+        more = CustomerMoreDetails.objects.create(customer=customer, status=1)
+
 
     # Handle JSON status-check request
     if request.content_type.startswith('application/json'):
@@ -1760,38 +1701,40 @@ def completed_status(request):
 
     try:
         customer_id = request.session.get('customer_id')
-
         if not customer_id:
             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
 
-        customer = CustomerRegister.objects.filter(id=customer_id,status=1).first()
+        customer = CustomerRegister.objects.filter(id=customer_id, status=1).first()
         if not customer:
             return JsonResponse({'error': 'Customer not found'}, status=404)
 
-        kyc = KYCDetails.objects.filter(customer=customer,status=1).first()
-        if kyc:
-            pan_complete = kyc.pan_status == 1
-            aadhar_complete = kyc.aadhar_status == 1
-        else:
-            pan_complete = aadhar_complete = False
+        kyc = KYCDetails.objects.filter(customer=customer, status=1).first()
+        pan_complete = kyc.pan_status == 1 if kyc else False
+        aadhar_complete = kyc.aadhar_status == 1 if kyc else False
 
-        more = CustomerMoreDetails.objects.filter(customer=customer,status=1).first()
-        if more:
-            personal_complete = more.personal_status == 1
-            selfie_complete = more.selfie_status == 1
-            signature_complete = more.signature_status == 1
-        else:
-            personal_complete = selfie_complete = signature_complete = False
+        # more = CustomerMoreDetails.objects.filter(customer=customer, status=1).order_by('-id').first()
+        # more = CustomerMoreDetails.objects.filter(customer=customer).order_by('-id').first()
 
-        kyc_completed = (
-            pan_complete and
-            aadhar_complete and
-            personal_complete and
-            selfie_complete and
+        # personal_complete = more.personal_status == 1 if more else False
+        # selfie_complete = more.selfie_status == 1 if more else False
+        # signature_complete = more.signature_status == 1 if more else False
+
+        more = CustomerMoreDetails.objects.filter(customer=customer, status=1).order_by('-id').first()
+
+        personal_complete = more.personal_status == 1 if more else False
+        selfie_complete = more.selfie_status == 1 if more else False
+        signature_complete = more.signature_status == 1 if more else False
+
+
+
+
+        kyc_completed = all([
+            pan_complete,
+            aadhar_complete,
+            personal_complete,
+            selfie_complete,
             signature_complete
-        )
-
-        # nominee_complete = NomineeDetails.objects.filter(customer=customer, status=1).exists()
+        ])
 
         if kyc_completed:
             return JsonResponse({'message': 'All KYC details are completed.'}, status=200)
@@ -1807,6 +1750,7 @@ def completed_status(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+
 #part wise payment 
 @customer_login_required
 @csrf_exempt
@@ -1857,7 +1801,7 @@ def create_drone_order(request):
             ).values_list('payment_status', flat=True).first()
 
             # If the previous order is unpaid (status not 1), delete it
-            if latest_order_status != 1 and latest_order.drone_payment_status != 'paid':
+            if latest_order_status != 1 and latest_order.drone_payment_status != 'captured':
                 PaymentDetails.objects.filter(
                     customer=customer,
                     drone_order_id=latest_order_id
@@ -1931,177 +1875,7 @@ def create_drone_order(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-#one time payment
-# @customer_login_required
-# @csrf_exempt
-# def _create_drone_order(request):
-#     if request.method != 'POST':
-#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
 
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = request.session.get('customer_id')
-#         email = data.get('email')
-#         quantity = int(data.get('quantity') or 1)
-#         total_amount = Decimal(data.get('total_amount') or 0)
-#         payment_type = data.get('payment_type', 'fullpayment').lower()
-
-#         if not customer_id:
-#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-
-#         if not all([email, quantity, total_amount]):
-#             return JsonResponse({'error': 'Missing required fields'}, status=400)
-
-#         if payment_type != "fullpayment":
-#             return JsonResponse({'error': 'Only fullpayment is allowed in this API'}, status=400)
-
-#         if quantity > 10:
-#             return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
-
-#         customer = CustomerRegister.objects.filter(id=customer_id, email=email, status=1).first()
-#         if not customer:
-#             return JsonResponse({'error': 'Customer not found'}, status=404)
-
-#         unit_price = 100000
-#         total_required = unit_price * quantity
-
-#         if total_amount > total_required:
-#             return JsonResponse({
-#                 'error': f'Maximum amount is ₹{total_required:,}. Please enter a valid amount.'
-#             }, status=400)
-
-#         if total_amount > 500000:
-#             return JsonResponse({
-#                 'error': 'Full payment cannot exceed ₹5,00,000 in a single order (Razorpay test mode limit).'
-#             }, status=400)
-
-#         # Clear previous unpaid order
-#         latest_order = PaymentDetails.objects.filter(customer=customer).order_by('-created_at').first()
-#         if latest_order and latest_order.drone_payment_status != 'paid':
-#             PaymentDetails.objects.filter(
-#                 customer=customer,
-#                 drone_order_id=latest_order.drone_order_id
-#             ).delete()
-
-#         # Create Razorpay order
-#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-#         drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
-#         admin = Admin.objects.filter(id=1).first()
-#         if not admin:
-#             return JsonResponse({'error': 'Admin not found'}, status=500)
-
-#         razorpay_order = client.order.create({
-#             'amount': int(total_amount * 100),
-#             'currency': 'INR',
-#             'payment_capture': 1,
-#             'notes': {
-#                 'customer_id': str(customer_id),
-#                 'email': email,
-#                 'drone_order_id': drone_order_id,
-#                 'quantity': str(quantity),
-#                 'unit_price': str(unit_price),
-#             }
-#         })
-
-#         PaymentDetails.objects.create(
-#             customer=customer,
-#             razorpay_order_id=razorpay_order['id'],
-#             amount=total_amount,
-#             total_amount=total_amount,
-#             drone_payment_status='created',
-#             quantity=quantity,
-#             drone_order_id=drone_order_id,
-#             payment_type=payment_type,
-#             admin=admin
-#         )
-
-#         return JsonResponse({
-#             'message': 'Full payment order created.',
-#             'drone_order_id': drone_order_id,
-#             'customer_id': customer_id,
-#             'payment_type': payment_type,
-#             'order': {
-#                 'order_id': razorpay_order['id'],
-#                 'razorpay_key': settings.RAZORPAY_KEY_ID,
-#                 'amount': float(total_amount),
-#                 'currency': 'INR',
-#                 'email': email,
-#                 'quantity': quantity,
-#             }
-    #     })
-
-    # except Exception as e:
-    #     return JsonResponse({'error': str(e)}, status=500)
-#individual call back for fullpayment
-# @csrf_exempt
-# def _razorpay_callback(request):
-#     try:
-#         payload = request.body
-#         data = json.loads(payload)
-#         signature = request.headers.get('X-Razorpay-Signature')
-#         event = data.get('event')
-
-#         expected_signature = hmac.new(
-#             settings.RAZORPAY_WEBHOOK_SECRET.encode(),
-#             msg=payload,
-#             digestmod=hashlib.sha256
-#         ).hexdigest()
-
-#         if signature != expected_signature:
-#             return JsonResponse({'error': 'Invalid signature'}, status=400)
-
-#         if event == 'payment.captured':
-#             payment_entity = data['payload']['payment']['entity']
-#             razorpay_order_id = payment_entity['order_id']
-#             payment_id = payment_entity['id']
-
-#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-#             if payment and payment.drone_payment_status != 'paid':
-#                 payment.drone_payment_status = 'paid'
-#                 payment.razorpay_payment_id = payment_id
-#                 payment.payment_mode = payment_entity.get('method')
-#                 payment.save()
-
-#                 print(f"✅ Payment Captured - Razorpay Order ID: {razorpay_order_id}, Payment ID: {payment_id}")
-#                 print(f"Installment Part {payment.part_number} marked as PAID for Drone Order ID: {payment.drone_order_id}")
-
-#                 # Get total parts and paid parts for this order
-#                 all_parts = PaymentDetails.objects.filter(
-#                     drone_order_id=payment.drone_order_id,
-#                     customer=payment.customer
-#                 )
-#                 total_parts = all_parts.count()
-#                 paid_parts = all_parts.filter(drone_payment_status='paid').count()
-#                 if paid_parts == total_parts:
-#                     # Calculate total paid amount
-#                     total_paid = all_parts.filter(drone_payment_status='paid') \
-#                         .aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
-
-#                     # Get total amount expected from first object (all should have same)
-#                     expected_total = all_parts.first().total_amount or Decimal('0.0')
-
-#                     if total_paid == expected_total:
-#                         # Mark all records as fully paid
-#                         updated = all_parts.update(payment_status=1)
-                        
-#         elif event == 'payment.failed':
-#             payment_entity = data['payload']['payment']['entity']
-#             razorpay_order_id = payment_entity['order_id']
-#             payment_id = payment_entity['id']
-
-#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-#             if payment and payment.drone_payment_status != 'failed':
-#                 payment.drone_payment_status = 'failed'
-#                 payment.razorpay_payment_id = payment_id
-#                 payment.payment_mode = payment_entity.get('method')
-#                 payment.save()
-#                 print(f"❌ Part {payment.part_number} marked as FAILED for Drone Order ID: {payment.drone_order_id}")
-
-#         return HttpResponse(status=200)
-
-#     except Exception as e:
-#         print("Webhook error:", str(e))
-#         return JsonResponse({'error': str(e)}, status=500)
 #combine status 
 #    
 @customer_login_required
@@ -2109,7 +1883,8 @@ def create_drone_order(request):
 def payment_status_check(request):
     try:
         data = json.loads(request.body)
-        customer_id = request.session.get("customer_id")
+        customer_id=data.get("customer_id") or request.session.get("customer_id")
+        # customer_id = request.session.get("customer_id")
         payment_type = data.get("payment_type", "installment")
         drone_order_id = data.get("drone_order_id")
 
@@ -2177,11 +1952,11 @@ def payment_status_check(request):
         total_invoice_status = 1 if invoice_status_sum == 5 else 0
         # -------------
         total_parts = all_parts.count()
-        paid_parts = all_parts.filter(drone_payment_status='paid').count()
+        paid_parts = all_parts.filter(drone_payment_status='captured').count()  
 
-        # For both installment and fullpayment, use same fields
+        # For both installment and fullpayment, use same fields ,  captured
         total_amount = all_parts.first().total_amount or 0
-        total_paid = all_parts.filter(drone_payment_status='paid').aggregate(
+        total_paid = all_parts.filter(drone_payment_status='captured').aggregate(
             total=Sum('amount')
         )['total'] or 0
 
@@ -2211,95 +1986,13 @@ def payment_status_check(request):
             "days_left": days_left,
             "total_invoices": total_invoices,
             "total_invoice_amount": str(total_invoice_amount),
+            # "total_invoice_status":1
             "total_invoice_status": total_invoice_status,
 
         })
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-
-# @customer_login_required
-# @csrf_exempt
-# def payment_status_check(request):
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = request.session.get("customer_id")
-#         payment_type = data.get("payment_type") or "installment"
-#         drone_order_id = data.get("drone_order_id")
-
-#         if not customer_id:
-#             return JsonResponse({"error": "Unauthorized: Login required"}, status=403)
-
-#         # Step 1: Get latest drone_order_id if not provided
-#         if not drone_order_id:
-#             latest = PaymentDetails.objects.filter(
-#                 customer_id=customer_id,
-#                 payment_type=payment_type
-#             ).order_by('-id').first()
-
-#             if latest:
-#                 drone_order_id = latest.drone_order_id
-#             else:
-#                 return JsonResponse({
-#                     "paid": False,
-#                     "message": f"No {payment_type} orders found yet.",
-#                     "payment_status": 0
-#                 })
-
-#         # Step 2: Get all parts
-#         all_parts = PaymentDetails.objects.filter(
-#             customer_id=customer_id,
-#             drone_order_id=drone_order_id,
-#             payment_type=payment_type
-#         )
-
-#         if not all_parts.exists():
-#             return JsonResponse({
-#                 "paid": False,
-#                 "message": "Order not found for this payment type.",
-#                 "payment_status": 0
-#             })
-
-#         total_parts = all_parts.count()
-#         paid_parts = all_parts.filter(drone_payment_status='paid').count()
-
-#         if payment_type == "installment":
-#             total_paid = all_parts.filter(drone_payment_status='paid').aggregate(
-#                 total=Sum('installment_amount'))['total'] or 0
-#             total_amount = all_parts.first().amount or 0
-#         else:  # fullpayment
-#             total_paid = all_parts.filter(drone_payment_status='paid').aggregate(
-#                 total=Sum('amount'))['total'] or 0
-#             total_amount = all_parts.aggregate(total=Sum('amount'))['total'] or 0
-
-#         remaining_amount = max(total_amount - total_paid, 0)
-#         payment_status = all_parts.first().payment_status
-
-#         # Step 3: Days left for installment only
-#         days_left = None
-#         if payment_type == "installment":
-#             first_payment = all_parts.order_by('created_at').first()
-#             start_date = first_payment.created_at.date() if first_payment else timezone.now().date()
-#             today = timezone.now().date()
-#             days_left = max(0, 90 - (today - start_date).days)
-
-#         # Correctly determine 'paid'
-#         paid = total_paid >= total_amount and total_amount > 0
-
-#         return JsonResponse({
-#             "paid": paid,
-#             "message": "✅ Fully paid. You can proceed with a new order." if paid else f"⚠️ Payment still pending ({paid_parts}/{total_parts})",
-#             "payment_status": payment_status,
-#             "drone_order_id": drone_order_id,
-#             "payment_type": payment_type,
-#             "total_amount": str(total_amount),
-#             "paid_amount": str(total_paid),
-#             "remaining_amount": str(remaining_amount),
-#             "days_left": days_left
-#         })
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
 
 @customer_login_required
 @csrf_exempt
@@ -2320,7 +2013,7 @@ def create_drone_installment_order(request):
 
         email = data.get('email')
         quantity = int(data.get('quantity') or 1)
-        amount = Decimal(data.get('amount') or 0) #installment_amount
+        amount = Decimal(data.get('amount') or 0)  # installment_amount
         total_amount = Decimal(data.get('total_amount') or 0)
 
         if not all([email, quantity, amount, total_amount]):
@@ -2328,102 +2021,75 @@ def create_drone_installment_order(request):
 
         if quantity > 10:
             return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
-
+        unit_price = 1200000
+        total_required = unit_price * quantity
+        order_amount = total_required
+                
         admin = Admin.objects.filter(id=1).first()
         if not admin:
             return JsonResponse({'error': 'Admin not found'}, status=500)
-        # Clean up unpaid previous orders
-        latest_order = PaymentDetails.objects.filter(customer=customer, status=1).order_by('-created_at').first()
-        if latest_order:
-            latest_order_id = latest_order.drone_order_id
-            latest_order_status = PaymentDetails.objects.filter(
-                customer=customer,
-                drone_order_id=latest_order_id
-            ).values_list('payment_status', flat=True).first()
-
-            # SAFE: Deletes only unpaid "created" installment or full order if nothing paid
-            if latest_order_status != 1 and latest_order.drone_payment_status == 'created':
-                if not PaymentDetails.objects.filter(
-                    customer=customer,
-                    drone_order_id=latest_order_id,
-                    drone_payment_status='paid'
-                ).exists():
-                    # If no part is paid, it's safe to delete whole order
-                    PaymentDetails.objects.filter(
-                        customer=customer,
-                        drone_order_id=latest_order_id
-                    ).delete()
-                else:
-                    # Just delete the latest created installment only
-                    latest_order.delete()
-
-
-        # Step: Check if there's any previous unpaid installment by this customer
-        # Step 1: Check if there is any unpaid order (reuse it)
-        existing_unpaid = PaymentDetails.objects.filter(
+        existing_order = None
+        orders = PaymentDetails.objects.filter(
             customer=customer,
-            payment_type='installment',
-            drone_payment_status__in=['created', 'failed']
-        ).order_by('-created_at').first()
+            payment_type='installment'
+        ).order_by('-created_at').values_list('drone_order_id', flat=True).distinct()
 
-        if existing_unpaid:
-            # Reuse existing unpaid drone_order_id
-            drone_order_id = existing_unpaid.drone_order_id
-            order_amount = existing_unpaid.amount
+        for order_id in orders:
+            total_paid = PaymentDetails.objects.filter(
+                customer=customer,
+                drone_order_id=order_id,
+                payment_type='installment',
+                drone_payment_status='captured'
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
+            order_amount = PaymentDetails.objects.filter(
+                customer=customer,
+                drone_order_id=order_id,
+                payment_type='installment'
+            ).first().total_amount
+            if total_paid < order_amount:
+                existing_order = order_id
+                break
+
+        if existing_order:
+            drone_order_id = existing_order
             previous_payments = PaymentDetails.objects.filter(
                 customer=customer,
                 drone_order_id=drone_order_id,
                 payment_type='installment'
             )
+            order_amount = previous_payments.first().total_amount
+           
         else:
-            # Step 2: Check latest completed or in-progress order
-            latest_order = PaymentDetails.objects.filter(
-                customer=customer,
-                payment_type='installment'
-            ).order_by('-created_at').first()
-
-            if latest_order:
-                drone_order_id = latest_order.drone_order_id
-                order_amount = latest_order.total_amount
-                previous_payments = PaymentDetails.objects.filter(
-                    customer=customer,
-                    drone_order_id=drone_order_id,
-                    payment_type='installment'
-                )
-                total_paid = previous_payments.filter(
-                    drone_payment_status='paid'
-                ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
-
-                if total_paid >= order_amount:
-                    # Full paid, start fresh order
-                    drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
-                    order_amount = total_amount
-                    previous_payments = PaymentDetails.objects.none()
-            else:
-                # First order ever
-                drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
-                order_amount = total_amount
-                previous_payments = PaymentDetails.objects.none() 
-
+            drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+            previous_payments = PaymentDetails.objects.none()
+            order_amount = total_required
+     
+        if previous_payments.exists():
+            order_amount = previous_payments.first().total_amount
+        else:
+            order_amount = total_amount
         total_paid_installments = previous_payments.filter(
-            drone_payment_status='paid'
+            drone_payment_status='captured'
         ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
 
-        order_amount = previous_payments.first().total_amount if previous_payments.exists() else total_amount
-
+    
         remaining_amount = max(Decimal('0.0'), order_amount - total_paid_installments)
 
-        if remaining_amount <= 0:
-            return JsonResponse({'error': 'You have already paid the full amount.'}, status=400)
-
-        if total_paid_installments + amount > order_amount:
+        if total_paid_installments >= order_amount:
+            return JsonResponse({'error': 'You have already paid the full amount for this order. No further payments are accepted.'}, status=400)
+        if amount > remaining_amount:
             return JsonResponse({
                 'error': f'Installment exceeds remaining payable amount. You have already paid ₹{total_paid_installments:.2f}, remaining: ₹{remaining_amount:.2f}'
             }, status=400)
+        unpaid_payment = previous_payments.filter(
+            drone_payment_status__in=['created', 'failed', 'pending','cancelled']
+        ).order_by('-part_number').first()
 
-        installment_number = (previous_payments.aggregate(max_part=Max('part_number'))['max_part'] or 0) + 1
+        if unpaid_payment:
+            installment_number = unpaid_payment.part_number
+        else:
+            installment_number = (previous_payments.aggregate(max_part=Max('part_number'))['max_part'] or 0) + 1
 
-        # Create Razorpay order
         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
         order = client.order.create({
             'amount': int(amount * 100),
@@ -2437,8 +2103,6 @@ def create_drone_installment_order(request):
                 'quantity': str(quantity)
             }
         })
-
-        # Save to DB
         payment = PaymentDetails.objects.create(
             customer=customer,
             razorpay_order_id=order['id'],
@@ -2451,8 +2115,6 @@ def create_drone_installment_order(request):
             payment_type='installment',
             admin=admin
         )
-
-        # Calculate days left from first payment date
         first_payment = previous_payments.order_by('created_at').first()
         start_date = first_payment.created_at.date() if first_payment else timezone.now().date()
         today = timezone.now().date()
@@ -2467,7 +2129,7 @@ def create_drone_installment_order(request):
             'total_paid_amount': total_paid_installments,
             'remaining_amount': remaining_amount,
             'order': {
-                'razorepay_order_id': order['id'],
+                'razorpay_order_id': order['id'],
                 'razorpay_key': settings.RAZORPAY_KEY_ID,
                 'amount': amount,
                 'currency': 'INR',
@@ -2478,43 +2140,70 @@ def create_drone_installment_order(request):
 
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-#combile call back
+
+client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+from django.db import transaction
+
 @csrf_exempt
 def razorpay_callback(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST allowed"}, status=405)
+
     try:
         payload = request.body
-        signature = request.headers.get('X-Razorpay-Signature')
+        received_signature = request.META.get("HTTP_X_RAZORPAY_SIGNATURE")
+        webhook_secret = settings.RAZORPAY_WEBHOOK_SECRET
 
-        # Verify Razorpay signature
-        expected_signature = hmac.new(
-            settings.RAZORPAY_WEBHOOK_SECRET.encode(),
+        # Verify Signature
+        generated_signature = hmac.new(
+            webhook_secret.encode("utf-8"),
             msg=payload,
             digestmod=hashlib.sha256
         ).hexdigest()
 
-        if signature != expected_signature:
-            return JsonResponse({'error': 'Invalid signature'}, status=400)
+        if not hmac.compare_digest(received_signature, generated_signature):
+            return HttpResponseBadRequest("Invalid signature")
 
         data = json.loads(payload)
-        event = data.get('event')
+        payment_entity = data.get("payload", {}).get("payment", {}).get("entity", {})
 
-        if event == 'payment.captured':
-            payment_entity = data['payload']['payment']['entity']
-            razorpay_order_id = payment_entity['order_id']
-            payment_id = payment_entity['id']
+        razorpay_order_id = payment_entity.get("order_id")
+        razorpay_payment_id = payment_entity.get("id")
+        status = payment_entity.get("status")       # created | authorized | captured | failed
+        method = payment_entity.get("method")
+        amount = int(payment_entity.get("amount", 0))   # in paise
 
-            payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
+        if not razorpay_order_id:
+            return JsonResponse({"error": "Invalid payload"}, status=400)
 
-            if payment and payment.drone_payment_status != 'paid':
-                payment.drone_payment_status = 'paid'
-                payment.razorpay_payment_id = payment_id
-                payment.payment_mode = payment_entity.get('method')
-                payment.save()
+        payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
+        if not payment:
+            return JsonResponse({"error": "Payment record not found"}, status=404)
 
-                print(f"✅ Payment Captured - Razorpay Order ID: {razorpay_order_id}, Payment ID: {payment_id}")
-                print(f"🧾 Type: {payment.payment_type} | Part: {payment.part_number} | Drone Order: {payment.drone_order_id}")
+        # Handle Payment Status
+        with transaction.atomic():
+            if status == "authorized":
+                # ✅ Capture immediately in production
+                try:
+                    capture_res = client.payment.capture(razorpay_payment_id, amount)
+                    status = capture_res.get("status", "failed")
+                    print(f"Payment Authorized & Captured: {razorpay_payment_id}")
+                except Exception as e:
+                    print(f"Capture failed: {str(e)}")
+                    # If already captured, treat as success
+                    if "already been captured" in str(e).lower():
+                        status = "captured"
+                    else:
+                        status = "authorized"
+            # Always update DB with the latest Razorpay status
+            payment.razorpay_payment_id = razorpay_payment_id
+            payment.drone_payment_status = status   # captured | failed | authorized | refunded
+            payment.payment_mode = method
+            payment.save()
 
-                if payment.payment_type == 'installment':
+            # Run business logic only when captured
+            if status == "captured":
+                if payment.payment_type == "installment":
                     kyc = KYCDetails.objects.filter(customer=payment.customer).first()
 
                     context = {
@@ -2524,50 +2213,305 @@ def razorpay_callback(request):
                         "payment_mode": payment.payment_mode,
                         "amount": payment.amount,
                     }
-                    pdf_file = generate_receipt_pdf(context,"receipt_pdf.html")
-                    send_receipt_email(payment.customer, payment,kyc, pdf_file)
-                    
+                    pdf_file = generate_receipt_pdf(context, "receipt_pdf.html")
+                    send_receipt_email(payment.customer, payment, kyc, pdf_file)
+
+                    # check all installments
                     all_parts = PaymentDetails.objects.filter(
                         customer=payment.customer,
                         drone_order_id=payment.drone_order_id,
-                        payment_type='installment'
+                        payment_type="installment"
                     )
 
                     total_paid = all_parts.filter(
-                        drone_payment_status='paid'
-                    ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
+                        drone_payment_status="captured"
+                    ).aggregate(total=Sum("amount"))["total"] or Decimal("0.0")
 
-                    expected_total = all_parts.first().total_amount if all_parts.exists() else Decimal('0.0')
+                    expected_total = all_parts.first().total_amount if all_parts.exists() else Decimal("0.0")
 
                     if total_paid >= expected_total:
                         all_parts.update(payment_status=1)
-                        print(f"✅ Installment fully paid. All parts marked as complete for Order: {payment.drone_order_id}")
+                        print(f"✅ Installment fully paid. Order complete: {payment.drone_order_id}")
 
-                elif payment.payment_type == 'fullpayment':
-                    # For full payment, just mark status
+                elif payment.payment_type == "fullpayment":
                     payment.payment_status = 1
                     payment.save()
                     print(f"✅ Full payment completed for Order: {payment.drone_order_id}")
 
-        elif event == 'payment.failed':
-            payment_entity = data['payload']['payment']['entity']
-            razorpay_order_id = payment_entity['order_id']
-            payment_id = payment_entity['id']
-
-            payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-            if payment and payment.drone_payment_status != 'failed':
-                payment.drone_payment_status = 'failed'
-                payment.razorpay_payment_id = payment_id
-                payment.payment_mode = payment_entity.get('method')
-                payment.save()
-
-                print(f"❌ Payment Failed - Order ID: {payment.drone_order_id}, Part: {payment.part_number}")
-
-        return HttpResponse(status=200)
+        return JsonResponse({"status": "Webhook handled successfully"}, status=200)
 
     except Exception as e:
-        print("Webhook Error:", str(e))
-        return JsonResponse({'error': str(e)}, status=500)
+        print(f"Webhook Error: {str(e)}")
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+# @customer_login_required
+# @csrf_exempt
+# def create_drone_installment_order(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         customer_id = request.session.get('customer_id')
+
+#         if not customer_id:
+#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
+
+#         customer = CustomerRegister.objects.filter(id=customer_id, status=1).first()
+#         if not customer:
+#             return JsonResponse({'error': 'Customer not found'}, status=404)
+
+#         email = data.get('email')
+#         quantity = int(data.get('quantity') or 1)
+#         amount = Decimal(data.get('amount') or 0) #installment_amount
+#         total_amount = Decimal(data.get('total_amount') or 0)
+
+#         if not all([email, quantity, amount, total_amount]):
+#             return JsonResponse({'error': 'Missing required fields'}, status=400)
+
+#         if quantity > 10:
+#             return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
+
+#         admin = Admin.objects.filter(id=1).first()
+#         if not admin:
+#             return JsonResponse({'error': 'Admin not found'}, status=500)
+#         # Clean up unpaid previous orders
+#         latest_order = PaymentDetails.objects.filter(customer=customer, status=1).order_by('-created_at').first()
+#         if latest_order:
+#             latest_order_id = latest_order.drone_order_id
+#             latest_order_status = PaymentDetails.objects.filter(
+#                 customer=customer,
+#                 drone_order_id=latest_order_id
+#             ).values_list('payment_status', flat=True).first()
+
+#             # SAFE: Deletes only unpaid "created" installment or full order if nothing paid
+#             if latest_order_status != 1 and latest_order.drone_payment_status == 'created':
+#                 if not PaymentDetails.objects.filter(
+#                     customer=customer,
+#                     drone_order_id=latest_order_id,
+#                     drone_payment_status='paid'
+#                 ).exists():
+#                     # If no part is paid, it's safe to delete whole order
+#                     PaymentDetails.objects.filter(
+#                         customer=customer,
+#                         drone_order_id=latest_order_id
+#                     ).delete()
+#                 else:
+#                     # Just delete the latest created installment only
+#                     latest_order.delete()
+
+
+#         # Step: Check if there's any previous unpaid installment by this customer
+#         # Step 1: Check if there is any unpaid order (reuse it)
+#         existing_unpaid = PaymentDetails.objects.filter(
+#             customer=customer,
+#             payment_type='installment',
+#             drone_payment_status__in=['created', 'failed']
+#         ).order_by('-created_at').first()
+
+#         if existing_unpaid:
+#             # Reuse existing unpaid drone_order_id
+#             drone_order_id = existing_unpaid.drone_order_id
+#             order_amount = existing_unpaid.amount
+#             previous_payments = PaymentDetails.objects.filter(
+#                 customer=customer,
+#                 drone_order_id=drone_order_id,
+#                 payment_type='installment'
+#             )
+#         else:
+#             # Step 2: Check latest completed or in-progress order
+#             latest_order = PaymentDetails.objects.filter(
+#                 customer=customer,
+#                 payment_type='installment'
+#             ).order_by('-created_at').first()
+
+#             if latest_order:
+#                 drone_order_id = latest_order.drone_order_id
+#                 order_amount = latest_order.total_amount
+#                 previous_payments = PaymentDetails.objects.filter(
+#                     customer=customer,
+#                     drone_order_id=drone_order_id,
+#                     payment_type='installment'
+#                 )
+#                 total_paid = previous_payments.filter(
+#                     drone_payment_status='paid'
+#                 ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
+
+#                 if total_paid >= order_amount:
+#                     # Full paid, start fresh order
+#                     drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+#                     order_amount = total_amount
+#                     previous_payments = PaymentDetails.objects.none()
+#             else:
+#                 # First order ever
+#                 drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+#                 order_amount = total_amount
+#                 previous_payments = PaymentDetails.objects.none() 
+
+#         total_paid_installments = previous_payments.filter(
+#             drone_payment_status='paid'
+#         ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
+
+#         order_amount = previous_payments.first().total_amount if previous_payments.exists() else total_amount
+
+#         remaining_amount = max(Decimal('0.0'), order_amount - total_paid_installments)
+
+#         if remaining_amount <= 0:
+#             return JsonResponse({'error': 'You have already paid the full amount.'}, status=400)
+
+#         if total_paid_installments + amount > order_amount:
+#             return JsonResponse({
+#                 'error': f'Installment exceeds remaining payable amount. You have already paid ₹{total_paid_installments:.2f}, remaining: ₹{remaining_amount:.2f}'
+#             }, status=400)
+
+#         installment_number = (previous_payments.aggregate(max_part=Max('part_number'))['max_part'] or 0) + 1
+
+#         # Create Razorpay order
+#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+#         order = client.order.create({
+#             'amount': int(amount * 100),
+#             'currency': 'INR',
+#             'payment_capture': 1,
+#             'notes': {
+#                 'customer_id': str(customer_id),
+#                 'email': email,
+#                 'drone_order_id': drone_order_id,
+#                 'part': str(installment_number),
+#                 'quantity': str(quantity)
+#             }
+#         })
+
+#         # Save to DB
+#         payment = PaymentDetails.objects.create(
+#             customer=customer,
+#             razorpay_order_id=order['id'],
+#             total_amount=order_amount,
+#             amount=amount,
+#             part_number=installment_number,
+#             drone_payment_status='created',
+#             quantity=quantity,
+#             drone_order_id=drone_order_id,
+#             payment_type='installment',
+#             admin=admin
+#         )
+
+#         # Calculate days left from first payment date
+#         first_payment = previous_payments.order_by('created_at').first()
+#         start_date = first_payment.created_at.date() if first_payment else timezone.now().date()
+#         today = timezone.now().date()
+#         days_left = max(0, 2 - (today - start_date).days)
+
+#         return JsonResponse({
+#             'message': 'Installment order created.',
+#             'drone_order_id': drone_order_id,
+#             'installment_number': installment_number,
+#             'days_left': days_left,
+#             'total_amount': order_amount,
+#             'total_paid_amount': total_paid_installments,
+#             'remaining_amount': remaining_amount,
+#             'order': {
+#                 'razorepay_order_id': order['id'],
+#                 'razorpay_key': settings.RAZORPAY_KEY_ID,
+#                 'amount': amount,
+#                 'currency': 'INR',
+#                 'email': email,
+#                 'quantity': quantity
+#             }
+#         }, status=200)
+
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+# #combile call back
+# @csrf_exempt
+# def razorpay_callback(request):
+#     try:
+#         payload = request.body
+#         signature = request.headers.get('X-Razorpay-Signature')
+
+#         # Verify Razorpay signature
+#         expected_signature = hmac.new(
+#             settings.RAZORPAY_WEBHOOK_SECRET.encode(),
+#             msg=payload,
+#             digestmod=hashlib.sha256
+#         ).hexdigest()
+
+#         if signature != expected_signature:
+#             return JsonResponse({'error': 'Invalid signature'}, status=400)
+
+#         data = json.loads(payload)
+#         event = data.get('event')
+
+#         if event == 'payment.captured':
+#             payment_entity = data['payload']['payment']['entity']
+#             razorpay_order_id = payment_entity['order_id']
+#             payment_id = payment_entity['id']
+
+#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
+
+#             if payment and payment.drone_payment_status != 'paid':
+#                 payment.drone_payment_status = 'paid'
+#                 payment.razorpay_payment_id = payment_id
+#                 payment.payment_mode = payment_entity.get('method')
+#                 payment.save()
+
+#                 print(f"✅ Payment Captured - Razorpay Order ID: {razorpay_order_id}, Payment ID: {payment_id}")
+#                 print(f"🧾 Type: {payment.payment_type} | Part: {payment.part_number} | Drone Order: {payment.drone_order_id}")
+
+#                 if payment.payment_type == 'installment':
+#                     kyc = KYCDetails.objects.filter(customer=payment.customer).first()
+
+#                     context = {
+#                         "payment_type": payment.payment_type,
+#                         "part_number": payment.part_number,
+#                         "full_name": kyc.pan_name if kyc else "Customer",
+#                         "payment_mode": payment.payment_mode,
+#                         "amount": payment.amount,
+#                     }
+#                     pdf_file = generate_receipt_pdf(context,"receipt_pdf.html")
+#                     send_receipt_email(payment.customer, payment,kyc, pdf_file)
+                    
+#                     all_parts = PaymentDetails.objects.filter(
+#                         customer=payment.customer,
+#                         drone_order_id=payment.drone_order_id,
+#                         payment_type='installment'
+#                     )
+
+#                     total_paid = all_parts.filter(
+#                         drone_payment_status='paid'
+#                     ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
+
+#                     expected_total = all_parts.first().total_amount if all_parts.exists() else Decimal('0.0')
+
+#                     if total_paid >= expected_total:
+#                         all_parts.update(payment_status=1)
+#                         print(f"✅ Installment fully paid. All parts marked as complete for Order: {payment.drone_order_id}")
+
+#                 elif payment.payment_type == 'fullpayment':
+#                     # For full payment, just mark status
+#                     payment.payment_status = 1
+#                     payment.save()
+#                     print(f"✅ Full payment completed for Order: {payment.drone_order_id}")
+
+#         elif event == 'payment.failed':
+#             payment_entity = data['payload']['payment']['entity']
+#             razorpay_order_id = payment_entity['order_id']
+#             payment_id = payment_entity['id']
+
+#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
+#             if payment and payment.drone_payment_status != 'failed':
+#                 payment.drone_payment_status = 'failed'
+#                 payment.razorpay_payment_id = payment_id
+#                 payment.payment_mode = payment_entity.get('method')
+#                 payment.save()
+
+#                 print(f"❌ Payment Failed - Order ID: {payment.drone_order_id}, Part: {payment.part_number}")
+
+#         return HttpResponse(status=200)
+
+#     except Exception as e:
+#         print("Webhook Error:", str(e))
+#         return JsonResponse({'error': str(e)}, status=500)
 
 def generate_receipt_pdf(context, template_name):
     html_string = render_to_string(template_name, context)
@@ -2664,98 +2608,6 @@ def send_receipt_email(customer, payment,kyc, pdf_file):
         'application/pdf'
     )
     email_message.send()
-
-#installment call back
-
-# @csrf_exempt
-# def razorpay_callback(request):
-#     try:
-#         payload = request.body
-#         signature = request.headers.get('X-Razorpay-Signature')
-
-#         # Validate signature
-#         expected_signature = hmac.new(
-#             settings.RAZORPAY_WEBHOOK_SECRET.encode(),
-#             msg=payload,
-#             digestmod=hashlib.sha256
-#         ).hexdigest()
-
-#         if signature != expected_signature:
-#             return JsonResponse({'error': 'Invalid signature'}, status=400)
-
-#         data = json.loads(payload)
-#         event = data.get('event')
-
-#         if event == 'payment.captured':
-#             payment_entity = data['payload']['payment']['entity']
-#             razorpay_order_id = payment_entity['order_id']
-#             payment_id = payment_entity['id']
-
-#             print(f"✅ Payment Captured - Razorpay Order ID: {razorpay_order_id}, Payment ID: {payment_id}")
-
-#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-#             if payment and payment.drone_payment_status != 'paid':
-#                 payment.drone_payment_status = 'paid'
-#                 payment.razorpay_payment_id = payment_id
-#                 payment.payment_mode = payment_entity.get('method')
-#                 payment.save()
-#                 print(f"Installment Part {payment.part_number} marked as PAID for Drone Order ID: {payment.drone_order_id}")
-#                 all_parts = PaymentDetails.objects.filter(
-#                     customer=payment.customer,
-#                     drone_order_id=payment.drone_order_id,
-#                     payment_type='installment'
-#                 )
-
-#                 total_paid = all_parts.filter(
-#                     drone_payment_status='paid'
-#                 ).aggregate(total=Sum('amount'))['total'] or Decimal('0.0')
-
-#                 expected_total = all_parts.first().total_amount if all_parts.exists() else Decimal('0.0')
-
-#                 if total_paid >= expected_total:
-#                     all_parts.update(payment_status=1)
-                
-#         elif event == 'payment.failed':
-#             payment_entity = data['payload']['payment']['entity']
-#             razorpay_order_id = payment_entity['order_id']
-#             payment_id = payment_entity['id']
-#             print(f"❌ Payment Failed - Razorpay Order ID: {razorpay_order_id}, Payment ID: {payment_id}")
-
-#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-#             if payment and payment.drone_payment_status != 'failed':
-#                 payment.drone_payment_status = 'failed'
-#                 payment.razorpay_payment_id = payment_id
-#                 payment.payment_mode = payment_entity.get('method')
-#                 payment.save()
-#                 print(f"Installment Part {payment.part_number} marked as FAILED for Drone Order ID: {payment.drone_order_id}")
-
-#         return HttpResponse(status=200)
-
-#     except Exception as e:
-#         print("Webhook Error:", str(e))
-#         return JsonResponse({'error': str(e)}, status=500)
-
-# @csrf_exempt
-# @customer_login_required
-# def delete_cancelled_order(request):
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = request.session.get("customer_id")
-#         drone_order_id = data.get("drone_order_id")
-
-#         if not customer_id or not drone_order_id:
-#             return JsonResponse({"error": "Missing customer_id or order_id"}, status=400)
-
-#         PaymentDetails.objects.filter(
-#             customer_id=customer_id,
-#             drone_order_id=drone_order_id,
-#             drone_payment_status='created'
-#         ).delete()
-
-#         return JsonResponse({"message": "Cancelled order deleted successfully."})
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
-
 def upload_file_to_s3(file_obj, file_key):
     s3 = boto3.client('s3',
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
@@ -2786,15 +2638,34 @@ def stage_nominees(request):
         if not nominee_list:
             return JsonResponse({"error": "No nominees provided."}, status=400)
 
-        allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.svg']
+        # Get already saved nominees and sum their shares
+        existing_nominees = NomineeDetails.objects.filter(customer=customer)
+        existing_share_total = sum(float(n.share or 0) for n in existing_nominees)
 
+        # Get staged nominees from cache if any
+        staged_nominees_cache = cache.get(f"cached_nominees_{customer_id}") or []
+        staged_share_total = sum(float(n["data"]["share"]) for n in staged_nominees_cache)
+
+        # Sum all existing + staged + new
+        new_nominee_share_total = existing_share_total + staged_share_total
+
+        for nominee in nominee_list:
+            new_nominee_share_total += float(nominee.get("share", 0))
+
+        if new_nominee_share_total > 100:
+            return JsonResponse({
+                "error": f"Total nominee share cannot exceed 100%. Current total: {existing_share_total + staged_share_total}%"
+            }, status=400)
+
+        allowed_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.svg']
         staged_nominees = []
 
         for index, nominee in enumerate(nominee_list):
             required_fields = [
                 "first_name", "last_name", "dob", "relation", "share",
-                "address_proof", "address_proof_file",  # address type and file key
-                "id_proof_file"              # id type and file key
+                "address",  # New field for address
+                "address_proof", "address_proof_file",
+                "id_proof_file"
             ]
             if not all(nominee.get(f) for f in required_fields):
                 return JsonResponse({"error": f"Missing fields in nominee {index + 1}."}, status=400)
@@ -2813,7 +2684,7 @@ def stage_nominees(request):
                 return JsonResponse({"error": f"Invalid file extension in nominee {index + 1}."}, status=400)
 
             staged_nominees.append({
-                "data": nominee,  # contains address_proof and id_proof
+                "data": nominee,
                 "address_proof_file": address_file.read().decode("latin1"),
                 "id_proof_file": id_file.read().decode("latin1"),
                 "address_name": address_file.name,
@@ -2830,7 +2701,7 @@ def stage_nominees(request):
         send_bulk_sms([str(customer.mobile_no)], otp)
         cache.set(f"otp_verified_{customer_id}", False, timeout=900)
 
-        return JsonResponse({"message": "OTP sent for Nominee verification."})
+        return JsonResponse({"message": "OTP sent for Nominee verification.","otp":otp})
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
@@ -2911,6 +2782,7 @@ def save_staged_nominees(request):
                     share=nominee_data["share"],
                     address_proof=nominee_data.get("address_proof", "Aadhar"),  # or set default
                     admin=admin,
+                    address=nominee_data["address"],
             )
  
             nominee_id = nominee_obj.id
@@ -2944,260 +2816,6 @@ def save_staged_nominees(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-# ✅ 1. Create Full Payment Order API (No Split)
-
-# @customer_login_required
-# @csrf_exempt
-# def create_drone_order(request):
-#     if request.method != 'POST':
-#         return JsonResponse({'error': 'Only POST allowed'}, status=405)
-
-#     try:
-#         data = json.loads(request.body)
-#         customer_id = request.session.get('customer_id')
-#         email = data.get('email')
-#         quantity = int(data.get('quantity') or 1)
-#         total_amount = Decimal(data.get('total_amount') or 0)
-#         payment_type = data.get('payment_type', 'fullpayment').lower()
-
-#         if not customer_id:
-#             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
-
-#         if not all([email, quantity, total_amount]):
-#             return JsonResponse({'error': 'Missing required fields'}, status=400)
-
-#         if payment_type != "fullpayment":
-#             return JsonResponse({'error': 'Only fullpayment is allowed in this API'}, status=400)
-
-#         if quantity > 10:
-#             return JsonResponse({'error': 'You can purchase a maximum of 10 drones.'}, status=400)
-
-#         customer = CustomerRegister.objects.filter(id=customer_id, email=email, status=1).first()
-#         if not customer:
-#             return JsonResponse({'error': 'Customer not found'}, status=404)
-
-#         unit_price = 200000
-#         total_required = unit_price * quantity
-
-#         if total_amount > total_required:
-#             return JsonResponse({
-#                 'error': f'Maximum amount is ₹{total_required:,}. Please enter a valid amount.'
-#             }, status=400)
-
-#         if total_amount > 500000:
-#             return JsonResponse({
-#                 'error': 'Full payment cannot exceed ₹5,00,000 in a single order (Razorpay test mode limit).'
-#             }, status=400)
-
-#         drone_order_id = f"OD{datetime.now().strftime('%Y%m%d%H%M%S')}{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
-
-#         admin = Admin.objects.filter(id=1).first()
-#         if not admin:
-#             return JsonResponse({'error': 'Admin not found'}, status=500)
-
-#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-#         razorpay_order = client.order.create({
-#             'amount': int(total_amount * 100),
-#             'currency': 'INR',
-#             'payment_capture': 1,
-#             'notes': {
-#                 'customer_id': str(customer_id),
-#                 'email': email,
-#                 'drone_order_id': drone_order_id,
-#                 'quantity': str(quantity),
-#                 'unit_price': str(unit_price),
-#             }
-#         })
-
-#         PaymentDetails.objects.create(
-#             customer=customer,
-#             razorpay_order_id=razorpay_order['id'],
-#             amount=total_amount,
-#             total_amount=total_amount,
-#             part_number=1,
-#             drone_payment_status='created',
-#             payment_status=0,
-#             quantity=quantity,
-#             drone_order_id=drone_order_id,
-#             payment_type=payment_type,
-#             admin=admin
-#         )
-
-#         return JsonResponse({
-#             'message': 'Full payment order created.',
-#             'drone_order_id': drone_order_id,
-#             'customer_id': customer_id,
-#             'payment_type': payment_type,
-#             'order': {
-#                 'order_id': razorpay_order['id'],
-#                 'razorpay_key': settings.RAZORPAY_KEY_ID,
-#                 'amount': float(total_amount),
-#                 'currency': 'INR',
-#                 'email': email,
-#                 'quantity': quantity,
-#             }
-#         })
-
-#     except Exception as e:
-#         return JsonResponse({'error': str(e)}, status=500)
-
-
-# # ✅ 2. Razorpay Webhook Callback
-
-# @csrf_exempt
-# def razorpay_callback(request):
-#     try:
-#         payload = request.body
-#         data = json.loads(payload)
-#         signature = request.headers.get('X-Razorpay-Signature')
-#         event = data.get('event')
-
-#         expected_signature = hmac.new(
-#             settings.RAZORPAY_WEBHOOK_SECRET.encode(),
-#             msg=payload,
-#             digestmod=hashlib.sha256
-#         ).hexdigest()
-
-#         if signature != expected_signature:
-#             return JsonResponse({'error': 'Invalid signature'}, status=400)
-
-#         payment_entity = data['payload']['payment']['entity']
-#         razorpay_order_id = payment_entity['order_id']
-#         payment_id = payment_entity['id']
-#         payment_method = payment_entity.get('method')
-
-#         payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-#         if not payment:
-#             return JsonResponse({'error': 'Order not found'}, status=404)
-
-#         if event == 'payment.captured':
-#             if payment.drone_payment_status != 'paid':
-#                 payment.drone_payment_status = 'paid'
-#                 payment.payment_status = 1
-#                 payment.razorpay_payment_id = payment_id
-#                 payment.payment_mode = payment_method
-#                 payment.save()
-
-#         elif event == 'payment.failed':
-#             if payment.drone_payment_status != 'failed':
-#                 payment.drone_payment_status = 'failed'
-#                 payment.razorpay_payment_id = payment_id
-#                 payment.payment_mode = payment_method
-#                 payment.save()
-
-#         return HttpResponse(status=200)
-
-#     except Exception as e:
-#         return JsonResponse({'error': str(e)}, status=500)
-
-
-# # # ✅ 3. Celery Task: Reconcile Missed Webhooks
-# # from celery import shared_task
-# # @shared_task
-# # def reconcile_lost_payments():
-# #     from django.utils import timezone
-# #     from datetime import timedelta
-# #     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-
-# #     stale_payments = PaymentDetails.objects.filter(
-# #         drone_payment_status__in=['created', 'pending'],
-# #         created_at__lt=timezone.now() - timedelta(minutes=15)
-# #     )
-
-# #     for payment in stale_payments:
-# #         try:
-# #             response = client.order.payments(payment.razorpay_order_id)
-# #             for pay in response.get("items", []):
-# #                 if pay['status'] == 'captured':
-# #                     payment.drone_payment_status = 'paid'
-# #                     payment.razorpay_payment_id = pay['id']
-# #                     payment.payment_mode = pay.get('method')
-# #                     payment.payment_status = 1
-# #                     payment.save()
-# #                     break
-# #         except Exception as e:
-# #             print(f"❌ Reconciliation failed for order {payment.drone_order_id}: {str(e)}")
-
-
-# # # ✅ 4. Optional Admin Reconciliation API
-# from celery import shared_task
-# from django.utils import timezone
-# from datetime import timedelta
-# import razorpay
-# from invest_app.models import PaymentDetails  # update path to your app
-# from django.conf import settings
-
-# @shared_task
-# def reconcile_lost_payments():
-#     client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-
-#     # Get all orders older than 15 minutes that are still unpaid
-#     stale_payments = PaymentDetails.objects.filter(
-#         drone_payment_status__in=['created', 'pending'],
-#         created_at__lt=timezone.now() - timedelta(minutes=15)
-#     )
-
-#     for payment in stale_payments:
-#         try:
-#             response = client.order.payments(payment.razorpay_order_id)
-#             items = response.get("items", [])
-
-#             if not items:
-#                 print(f"⚠️ No payments for order {payment.drone_order_id} (Razorpay ID: {payment.razorpay_order_id})")
-
-#                 # ✅ Mark it as pending if not already
-#                 if payment.drone_payment_status != 'pending':
-#                     payment.drone_payment_status = 'pending'
-#                     payment.save()
-#                 continue
-
-#             for pay in items:
-#                 if pay['status'] == 'captured':
-#                     payment.drone_payment_status = 'paid'
-#                     payment.razorpay_payment_id = pay['id']
-#                     payment.payment_mode = pay.get('method')
-#                     payment.payment_status = 1
-#                     payment.save()
-#                     print(f"✅ Payment reconciled: {payment.drone_order_id} marked as paid.")
-#                     break
-
-#         except Exception as e:
-#             print(f"❌ Reconciliation failed for order {payment.drone_order_id}: {str(e)}")
-
-# @csrf_exempt
-# def reconcile_payment(request):
-#     try:
-#         data = json.loads(request.body)
-#         razorpay_order_id = data.get("razorpay_order_id")
-
-#         if not razorpay_order_id:
-#             return JsonResponse({"error": "Missing Razorpay Order ID"}, status=400)
-
-#         client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
-#         response = client.order.payments(razorpay_order_id)
-#         items = response.get('items', [])
-
-#         if not items:
-#             return JsonResponse({"error": "No payments found for this order."}, status=404)
-
-#         latest_payment = items[-1]
-#         if latest_payment['status'] == 'captured':
-#             payment = PaymentDetails.objects.filter(razorpay_order_id=razorpay_order_id).first()
-#             if payment and payment.drone_payment_status != 'paid':
-#                 payment.razorpay_payment_id = latest_payment['id']
-#                 payment.drone_payment_status = 'paid'
-#                 payment.payment_status = 1
-#                 payment.payment_mode = latest_payment.get('method')
-#                 payment.save()
-#                 return JsonResponse({"message": "✅ Payment reconciled and marked as PAID."})
-
-#             return JsonResponse({"message": "Already marked as paid."})
-
-#         else:
-#             return JsonResponse({"status": latest_payment['status'], "message": "Payment not captured."})
-
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
 from datetime import date
 
 def generate_invoice_number(created_at):
@@ -3276,7 +2894,8 @@ def create_invoice(request):
         payment = PaymentDetails.objects.filter(
             customer=customer,
             drone_order_id=drone_order_id,
-            drone_payment_status='paid',
+            drone_payment_status__in=['captured', 'paid'],
+            # drone_payment_status='captured',
             status=1
         ).first()
         if not payment:
@@ -3327,7 +2946,7 @@ def create_invoice(request):
         drone_model_ids = [drone.id for drone in available_drones]
         uin_list = [drone.uin_number for drone in available_drones]
         for drone in available_drones:
-            drone.assign_status = 0
+            drone.assign_status = 1
             drone.save()
         # Create single invoice row
         invoice = InvoiceDetails.objects.create(
@@ -3651,7 +3270,7 @@ def create_amc_invoice(request):
         return JsonResponse({'error': 'Customer not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
-@customer_login_required
+# @customer_login_required
 @csrf_exempt
 def create_invoice_combined(request):
     if request.method != 'POST':
@@ -3659,7 +3278,8 @@ def create_invoice_combined(request):
 
     try:
         data = json.loads(request.body)
-        customer_id = request.session.get('customer_id')
+        customer_id=data.get('customer_id')
+        # customer_id = request.session.get('customer_id')
         if not customer_id:
             return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
 
@@ -3681,7 +3301,7 @@ def create_invoice_combined(request):
         payment = PaymentDetails.objects.filter(
             customer_id=customer_id,
             drone_order_id=drone_order_id,
-            drone_payment_status='paid',
+            drone_payment_status='captured',
             status=1
         ).first()
         if not payment:
@@ -4015,59 +3635,65 @@ def create_invoice_combined(request):
                     "accessory": "invoice_3.html"
                 }
                 pdf_attachments = []
-                for inv in completed_invoices:
-                    template_name = template_map.get(inv.invoice_type, "invoice_1.html")
-                    address = get_customer_address(customer.id, inv.address_type)
-                    context = {
-                        "invoice_type": inv.invoice_type.title(),
-                        "invoice_number": inv.invoice_number,
-                        "invoice_date": inv.created_at.strftime("%Y-%m-%d"),
-                        "invoice_status": inv.invoice_status,
-                        "serial_no": inv.serial_no,
-                        "description": inv.description,
-                        "parts_quantity": inv.parts_quantity,
-                        "rate_per_unit": float(inv.rate_per_unit),
-                        "hsn_sac_code": inv.hsn_sac_code,
-                        "uom": inv.uom,
-                        "total_amount": float(inv.total_amount),
-                        "cgst": float(inv.cgst),
-                        "sgst": float(inv.sgst),
-                        "igst": float(inv.igst),
-                        "total_taxable_amount": float(inv.total_taxable_amount),
-                        "total_invoice_amount": float(inv.total_invoice_amount),
-                        "total_invoice_amount_words": inv.total_invoice_amount_words,
-                        "uin_no": inv.uin_no,
-                        "address_type": inv.address_type,
-                        "customer": {
-                            "id": customer.id,
-                            "full_name": customer.kyc.pan_name if hasattr(customer, 'kyc') and customer.kyc else "Customer",
-                            "name": f"{customer.first_name} {customer.last_name}",
-                            "email": customer.email,
-                            "mobile_no": customer.mobile_no,
-                        },
-                        "address": address,
-                        "payment": {
-                            "id": inv.payment.id,
-                            "amount": float(inv.payment.amount),
-                            "total_amount": float(inv.payment.total_amount),
-                            "quantity": inv.payment.quantity,
-                            "drone_order_id": inv.payment.drone_order_id,
-                            "payment_status": inv.payment.payment_status,
-                            "drone_payment_status": inv.payment.drone_payment_status,
-                            "payment_type": inv.payment.payment_type,
-                            "payment_mode": inv.payment.payment_mode,
-                            "created_at": localtime(inv.payment.created_at).strftime("%Y-%m-%d"),
-                        }
-                    }
-                 
+                contexts = build_invoice_contexts(completed_invoices, customer)
+                for context in contexts:
+                    template_name = template_map.get(context["invoice_type"].lower(), "invoice_1.html")
+                # for inv in completed_invoices:
                     # template_name = template_map.get(inv.invoice_type, "invoice_1.html")
+                    # address = get_customer_address(customer.id, inv.address_type)
+                    # context = {
+                    #     "invoice_type": inv.invoice_type.title(),
+                    #     "invoice_number": inv.invoice_number,
+                    #     "invoice_date": inv.created_at.strftime("%Y-%m-%d"),
+                    #     "invoice_status": inv.invoice_status,
+                    #     "serial_no": inv.serial_no,
+                    #     "description": inv.description,
+                    #     "parts_quantity": inv.parts_quantity,
+                    #     "rate_per_unit": float(inv.rate_per_unit),
+                    #     "hsn_sac_code": inv.hsn_sac_code,
+                    #     "uom": inv.uom,
+                    #     "total_amount": float(inv.total_amount),
+                    #     "cgst": float(inv.cgst),
+                    #     "sgst": float(inv.sgst),
+                    #     "igst": float(inv.igst),
+                    #     "total_taxable_amount": float(inv.total_taxable_amount),
+                    #     "total_invoice_amount": float(inv.total_invoice_amount),
+                    #     "total_invoice_amount_words": inv.total_invoice_amount_words,
+                    #     "uin_no": inv.uin_no,
+                    #     "address_type": inv.address_type,
+                    #     "customer": {
+                    #         "id": customer.id,
+                    #         "full_name": customer.kyc.pan_name if hasattr(customer, 'kyc') and customer.kyc else "Customer",
+                    #         "name": f"{customer.first_name} {customer.last_name}",
+                    #         "email": customer.email,
+                    #         "mobile_no": customer.mobile_no,
+                    #     },
+                    #     "address": address,
+                    #     "payment": {
+                    #         "id": inv.payment.id,
+                    #         "amount": float(inv.payment.amount),
+                    #         "total_amount": float(inv.payment.total_amount),
+                    #         "quantity": inv.payment.quantity,
+                    #         "drone_order_id": inv.payment.drone_order_id,
+                    #         "payment_status": inv.payment.payment_status,
+                    #         "drone_payment_status": inv.payment.drone_payment_status,
+                    #         "payment_type": inv.payment.payment_type,
+                    #         "payment_mode": inv.payment.payment_mode,
+                    #         "created_at": localtime(inv.payment.created_at).strftime("%Y-%m-%d"),
+                    #     }
+                    # }
+                 
+                    # # template_name = template_map.get(inv.invoice_type, "invoice_1.html")
 
                     pdf_file = generate_receipt_pdf(context, template_name)
-
                     pdf_attachments.append({
-                        "filename": f"{inv.invoice_type.title()}_Invoice_{inv.invoice_number}.pdf",
+                        "filename": f"{context['invoice_type']}_Invoice_{context['invoice_number']}.pdf",
                         "file": pdf_file
                     })
+                    # pdf_attachments.append({
+                    #     "filename": f"{inv.invoice_type.title()}_Invoice_{inv.invoice_number}.pdf",
+                    #     "file": pdf_file
+                    # })
 
                 send_invoice_bundle_email(customer, pdf_attachments)
         except Exception as e:
@@ -4086,6 +3712,59 @@ def create_invoice_combined(request):
         return JsonResponse({'error': 'Customer not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+from django.utils.timezone import localtime
+
+def build_invoice_contexts(invoices, customer):
+    """
+    Create a reusable list of context dictionaries for multiple invoices.
+    Can be used for both viewing and PDF generation.
+    """
+    contexts = []
+    for inv in invoices:
+        address = get_customer_address(customer.id, inv.address_type)
+        context = {
+            "invoice_type": inv.invoice_type.title(),
+            "invoice_number": inv.invoice_number,
+            "invoice_date": inv.created_at.strftime("%Y-%m-%d"),
+            "invoice_status": inv.invoice_status,
+            "serial_no": inv.serial_no,
+            "description": inv.description,
+            "parts_quantity": inv.parts_quantity,
+            "rate_per_unit": float(inv.rate_per_unit),
+            "hsn_sac_code": inv.hsn_sac_code,
+            "uom": inv.uom,
+            "total_amount": float(inv.total_amount),
+            "cgst": float(inv.cgst),
+            "sgst": float(inv.sgst),
+            "igst": float(inv.igst),
+            "total_taxable_amount": float(inv.total_taxable_amount),
+            "total_invoice_amount": float(inv.total_invoice_amount),
+            "total_invoice_amount_words": inv.total_invoice_amount_words,
+            "uin_no": inv.uin_no,
+            "address_type": inv.address_type,
+            "customer": {
+                "id": customer.id,
+                "full_name": getattr(getattr(customer, 'kyc', None), 'pan_name', "Customer"),
+                "name": f"{customer.first_name} {customer.last_name}",
+                "email": customer.email,
+                "mobile_no": customer.mobile_no,
+            },
+            "address": address,
+            "payment": {
+                "id": inv.payment.id,
+                "amount": float(inv.payment.amount),
+                "total_amount": float(inv.payment.total_amount),
+                "quantity": inv.payment.quantity,
+                "drone_order_id": inv.payment.drone_order_id,
+                "payment_status": inv.payment.payment_status,
+                "drone_payment_status": inv.payment.drone_payment_status,
+                "payment_type": inv.payment.payment_type,
+                "payment_mode": inv.payment.payment_mode,
+                "created_at": localtime(inv.payment.created_at).strftime("%Y-%m-%d"),
+            }
+        }
+        contexts.append(context)
+    return contexts
     
 def send_invoice_bundle_email(customer, attachments):
     subject = "All Invoices from Pavaman Aviation"
@@ -4110,6 +3789,120 @@ def send_invoice_bundle_email(customer, attachments):
         email_message.attach(attachment["filename"], attachment["file"].read(), 'application/pdf')
 
     email_message.send()
+# @customer_login_required
+@csrf_exempt
+def view_invoices(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get("customer_id")       
+        # customer_id = request.session.get('customer_id')
+        if not customer_id:
+            return JsonResponse({"error": "Unauthorized"}, status=403)
+
+        drone_order_id = data.get("drone_order_id")
+        if not drone_order_id:
+            return JsonResponse({"error": "drone_order_id is required"}, status=400)
+
+        customer = CustomerRegister.objects.get(id=customer_id)
+        invoices = InvoiceDetails.objects.filter(
+            customer_id=customer_id,
+            payment__drone_order_id=drone_order_id
+        ).order_by('serial_no')
+
+        if not invoices.exists():
+            return JsonResponse({"error": "No invoices found"}, status=404)
+
+        contexts = build_invoice_contexts(invoices, customer)
+        return JsonResponse({"invoices": contexts}, status=200)
+
+    except CustomerRegister.DoesNotExist:
+        return JsonResponse({"error": "Customer not found"}, status=404)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+@csrf_exempt
+def view_installment_receipt(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get("customer_id")
+
+        if not customer_id:
+            return JsonResponse({"error": "customer_id is required as GET parameter"}, status=400)
+
+        payments = PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            drone_payment_status='captured',
+            payment_type='installment',
+            status=1
+        ).order_by('-id')
+
+        if not payments.exists():
+            return JsonResponse({"error": "No paid payments found for this customer."}, status=404)
+
+        kyc = KYCDetails.objects.filter(customer_id=customer_id).first()
+        full_name = kyc.pan_name if kyc else "Customer"
+
+        receipts = []
+        for payment in payments:
+            receipts.append({
+                "payment_type": payment.payment_type,
+                "installment_number": payment.part_number,
+                "full_name": full_name,
+                "payment_mode": payment.payment_mode,
+                "amount": float(payment.amount),
+                "payment_status": payment.payment_status,
+                "drone_order_id": payment.drone_order_id,
+                "razorpay_payment_id": payment.razorpay_payment_id,
+                "created_at": format_datetime_ist(payment.created_at),
+            })
+
+        return JsonResponse({"receipts": receipts}, status=200)
+
+    except Exception as e:
+        print("View Customer Receipt Error:", str(e))
+        return JsonResponse({"error": str(e)}, status=500)
+@csrf_exempt
+def payment_history(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get("customer_id")
+
+        if not customer_id:
+            return JsonResponse({"error": "customer_id is required"}, status=400)
+
+        payments = PaymentDetails.objects.filter(customer_id=customer_id).order_by("-id")
+
+        if not payments.exists():
+            return JsonResponse({"error": "No payment history found for this customer."}, status=404)
+
+        kyc = KYCDetails.objects.filter(customer_id=customer_id).first()
+        full_name = kyc.pan_name if kyc else "Customer"
+
+        history = []
+        for payment in payments:
+            history.append({
+                "payment_type": payment.payment_type,
+                "part_number": payment.part_number,
+                "full_name": full_name,
+                "payment_mode": payment.payment_mode,
+                "amount": float(payment.amount),
+                "payment_status": payment.payment_status,
+                "drone_order_id": payment.drone_order_id,
+                "razorpay_payment_id": payment.razorpay_payment_id,
+                "created_at": payment.created_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(payment, "created_at") else None
+            })
+
+        return JsonResponse({"payment_history": history}, status=200, safe=False)
+
+    except Exception as e:
+        print("Payment History Error:", str(e))
+        return JsonResponse({"error": str(e)}, status=500)
 
 @csrf_exempt 
 def get_invoice_details(request):
@@ -4242,3 +4035,708 @@ def get_customer_address(customer_id, address_type="permanent"):
     except CustomerMoreDetails.DoesNotExist:
         return None
   
+
+def calculate_age(dob):
+    from datetime import date
+    if not dob:
+        return ""
+    today = date.today()
+    return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+
+# @csrf_exempt
+# def generate_agreement_by_order(request):
+#     if request.method != 'POST':
+#         return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         drone_order_id = data.get('drone_order_id')
+#         customer_id = data.get('customer_id')
+
+#         if not drone_order_id:
+#             return JsonResponse({'error': 'drone_order_id is required'}, status=400)
+
+#         payments = PaymentDetails.objects.filter(drone_order_id=drone_order_id).order_by('created_at')
+#         if not payments.exists():
+#             return JsonResponse({'error': 'No payments found for this drone_order_id'}, status=404)
+
+#         payment = payments.first()
+#         invoices = InvoiceDetails.objects.filter(payment=payment)
+#         if not invoices.exists():
+#             return JsonResponse({'error': 'Invoice not found for this payment'}, status=404)
+
+#         invoice = invoices.first()
+#         customer = invoice.customer
+
+#         if customer_id and str(customer.id) != str(customer_id):
+#             return JsonResponse({'error': 'Unauthorized access'}, status=403)
+
+#         try:
+#             kyc = KYCDetails.objects.get(customer=customer)
+#         except KYCDetails.DoesNotExist:
+#             kyc = None
+
+#         nominees = NomineeDetails.objects.filter(customer=customer)
+#         more_details = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+#         uin_numbers = invoice.uin_no.split(',') if invoice.uin_no else []
+#         uin_numbers = [u.strip() for u in uin_numbers if u.strip()]
+#         drone_infos = CompanyDroneModelInfo.objects.filter(uin_number__in=uin_numbers)
+
+#         drone_names = [d.model_name for d in drone_infos]
+#         drone_uins = [d.uin_number for d in drone_infos]
+
+#         unique_names = list(dict.fromkeys(drone_names))
+#         unique_uins = list(dict.fromkeys(drone_uins))
+
+#         drone_name = ', '.join(unique_names)
+#         drone_unique_code = ', '.join(unique_uins)
+
+#         today = localtime().date()
+#         agreement_no = f"PAV-AGRI-{today.strftime('%Y%m%d')}{str(customer.id).zfill(3)}"
+#         from_date = today
+#         to_date = today + relativedelta(months=66)
+
+#         unique_invoice_map = {}
+#         for inv in invoices:
+#             inv_number = inv.invoice_number.strip().replace('\n', '').replace('\r', '')
+#             if inv_number and inv_number not in unique_invoice_map:
+#                 unique_invoice_map[inv_number] = inv
+#         unique_invoices = list(unique_invoice_map.values())
+#         unique_invoices.sort(key=lambda x: x.created_at)
+
+#         invoice_number_str = ','.join(unique_invoice_map.keys())
+#         invoice_date_str = unique_invoices[0].created_at.strftime("%Y-%m-%d") if unique_invoices else ''
+#         total_invoice_amount = sum(inv.total_invoice_amount for inv in unique_invoices)
+
+#         resident_of = ""
+#         address_type = getattr(invoice, 'address_type', 'permanent')
+#         if more_details:
+#             if more_details.same_address:
+#                 resident_of = f"{more_details.address or ''}, {more_details.city or ''}, " \
+#                               f"{more_details.district or ''}, {more_details.mandal or ''}, " \
+#                               f"{more_details.country or ''} - {more_details.pincode or ''}"
+#             else:
+#                 if address_type == "present":
+#                     resident_of = f"{more_details.present_address or ''}, {more_details.present_city or ''}, " \
+#                                       f"{more_details.present_district or ''}, {more_details.present_mandal or ''}, " \
+#                                       f"{more_details.present_country or ''} - {more_details.present_pincode or ''}"
+#                 else:
+#                     resident_of = f"{more_details.address or ''}, {more_details.city or ''}, " \
+#                                   f"{more_details.district or ''}, {more_details.mandal or ''}, " \
+#                                   f"{more_details.country or ''} - {more_details.pincode or ''}"
+#             signature_url = ""
+#             if more_details and more_details.signature_path:
+#                 signature_url = f"https://{settings.AWS_STORAGE_BUCKET_NAME}.s3.{settings.AWS_S3_REGION_NAME}.amazonaws.com/{more_details.signature_path}"
+
+#             context = {
+#                 "preview": {
+#                     "agreement_no": agreement_no,
+#                     "agreement_date": today.strftime("%Y-%m-%d"),
+#                     "agreement_day": today.strftime('%d'),
+#                     "agreement_month": today.strftime('%m'),
+#                     "agreement_year_full": today.year,
+#                     "agreement_year_short": str(today.year)[-2:],
+#                     "from_date": from_date.strftime("%Y-%m-%d"),
+#                     "to_date": to_date.strftime("%Y-%m-%d"),
+#                     "drone_name": drone_name,
+#                     "drone_unique_code": drone_unique_code,
+#                     "invoice_number_str": invoice_number_str,
+#                     "invoice_date_str": invoice_date_str,
+#                     "total_invoice_amount": total_invoice_amount
+#                 },
+#                 "lessor": {
+#                     "name": kyc.pan_name if kyc else f"{customer.first_name} {customer.last_name}",
+#                     "guardian_name": "",  # If you have father/spouse name, put here
+#                     "age": calculate_age(kyc.pan_dob) if kyc and kyc.pan_dob else "",
+#                     "resident_of": resident_of,
+#                     "pan_number": kyc.pan_number if kyc else "",
+#                     "aadhaar_number": kyc.aadhar_number if kyc else "",
+#                     "signature_url": signature_url
+#                 },
+#                 "bank_details": {
+#                     "account_number": kyc.bank_account_number if kyc else "",
+#                     "account_holder_name": kyc.pan_name if kyc else "",
+#                     "bank_name": kyc.bank_name if kyc else "",
+#                     "ifsc_code": kyc.ifsc_code if kyc else ""
+#                 },
+#                 "nominees": [
+#                     {
+#                         "sno": idx + 1,
+#                         "nominee_name": f"{n.first_name} {n.last_name}",
+#                         "nominee_relation": n.relation,
+#                         "nominee_address": "",  # If available
+#                         "nominee_share": n.share
+#                     }
+#                     for idx, n in enumerate(nominees)
+#                 ],
+#                 "company_details": {
+#                     "signature": "https://pavamaninvestdoc.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png",
+#                     "stamp": "https://pavamaninvestdoc.s3.ap-south-1.amazonaws.com/Pavaman_Stamp.png"
+#                 }
+#             }
+
+
+
+#         html_string = render_to_string('agreement.html', context)
+#         pdf_buffer = BytesIO()
+#         HTML(string=html_string).write_pdf(target=pdf_buffer)
+#         pdf_content = pdf_buffer.getvalue()
+
+#         s3 = boto3.client(
+#             's3',
+#             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+#             aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+#             region_name=settings.AWS_S3_REGION_NAME
+#         )
+
+#         bucket_name = settings.AWS_STORAGE_BUCKET_NAME
+#         first_name = customer.first_name or ''
+#         last_name = customer.last_name or ''
+#         customer_folder = f"customerdoc/{customer.id}_{first_name.lower()}{last_name.lower()}/"
+#         timestamp_str = datetime.now().strftime('%Y%m%d%H%M%S')
+#         s3_filename = f"{customer_folder}agreement_{agreement_no}_{timestamp_str}.pdf"
+
+#         s3.upload_fileobj(
+#             BytesIO(pdf_content),
+#             bucket_name,
+#             s3_filename,
+#             ExtraArgs={'ContentType': 'application/pdf'}
+#         )
+
+#         s3_url = f"https://{bucket_name}.s3.{settings.AWS_S3_REGION_NAME}.amazonaws.com/{s3_filename}"
+
+#         agreement_obj = AgreementDetails.objects.create(
+#             agreement_no=agreement_no,
+#             agreement_date=today,
+#             agreement_day=today.strftime('%d'),
+#             agreement_month=today.strftime('%m'),
+#             agreement_year_full=today.year,
+#             agreement_year_short=str(today.year)[-2:],
+#             from_date=from_date,
+#             to_date=to_date,
+#             drone_name=drone_name,
+#             drone_unique_code=drone_unique_code,
+#             invoice_number=invoice_number_str,
+#             invoice_date=invoice.created_at.date(),
+#             witness_leassor="Leassor Name",
+#             witness_lessee="Lessee Name",
+#             customer=customer
+#         )
+
+#         # email = EmailMessage(
+#         #     subject=f"Agreement Document - {agreement_no}",
+#         #     body=f"Dear {customer.first_name},\n\nPlease find attached the agreement document.\n\nRegards,\nTeam",
+#         #     from_email=settings.DEFAULT_FROM_EMAIL,
+#         #     #to=[customer.email, 'saralkumar28@gmail.com'],
+#         #     to=['saralkumar28@gmail.com']
+#         # )
+#         # email.attach(f"Agreement_{agreement_no}.pdf", pdf_content, "application/pdf")
+#         # email.send(fail_silently=False)
+
+#         # Send to WhatsApp
+#         # whatsapp_response = send_agreement_on_whatsapp(
+#         #     # mobile_number=customer.mobile,
+#         #     mobile_number="7981956619",
+#         #     agreement_url=s3_url,
+#         #     agreement_no=agreement_no
+#         # )
+
+#         return JsonResponse({
+#             "message": "Agreement generated, uploaded to S3, emailed, and sent via WhatsApp successfully",
+#             "agreement_pdf_url": s3_url,
+#             "agreement_no": agreement_obj.agreement_no,
+#             # "whatsapp_status": whatsapp_response
+#         })
+
+#     except json.JSONDecodeError:
+#         return JsonResponse({'error': 'Invalid JSON'}, status=400)
+#     except Exception as e:
+#         return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+def generate_agreement_by_order(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        drone_order_id = data.get('drone_order_id')
+        customer_id = data.get('customer_id')
+
+        if not drone_order_id:
+            return JsonResponse({'error': 'drone_order_id is required'}, status=400)
+
+        payments = PaymentDetails.objects.filter(drone_order_id=drone_order_id).order_by('created_at')
+        if not payments.exists():
+            return JsonResponse({'error': 'No payments found for this drone_order_id'}, status=404)
+
+        payment = payments.first()
+        invoices = InvoiceDetails.objects.filter(payment=payment)
+        if not invoices.exists():
+            return JsonResponse({'error': 'Invoice not found for this payment'}, status=404)
+
+        invoice = invoices.first()
+        customer = invoice.customer
+
+        if customer_id and str(customer.id) != str(customer_id):
+            return JsonResponse({'error': 'Unauthorized access'}, status=403)
+
+        try:
+            kyc = KYCDetails.objects.get(customer=customer)
+        except KYCDetails.DoesNotExist:
+            kyc = None
+
+        nominees = NomineeDetails.objects.filter(customer=customer)
+
+        # ✅ Get the same signature record logic as preview
+        customer_more = (
+            CustomerMoreDetails.objects
+            .filter(customer=customer, status=1)
+            .exclude(signature_path__isnull=True)
+            .exclude(signature_path__exact="")
+            .order_by("-id")
+            .first()
+        )
+
+        signature_url = ""
+        if customer_more and customer_more.signature_path:
+            signature_url = f"{settings.AWS_S3_BUCKET_URL}/{customer_more.signature_path}"
+
+        if not (customer_more and customer_more.guardian_name and customer_more.guardian_relation):
+            guardian_source = (
+                CustomerMoreDetails.objects
+                .filter(customer=customer)
+                .exclude(guardian_name__isnull=True)
+                .exclude(guardian_name__exact="")
+                .exclude(guardian_relation__isnull=True)
+                .exclude(guardian_relation__exact="")
+                .order_by("-id")
+                .first()
+            )
+            if guardian_source:
+                guardian_name = guardian_source.guardian_name
+                guardian_relation = guardian_source.guardian_relation
+            else:
+                guardian_name = ""
+                guardian_relation = ""
+        else:
+            guardian_name = customer_more.guardian_name
+            guardian_relation = customer_more.guardian_relation
+
+        # Address
+        resident_of = ""
+        address_type = getattr(invoice, 'address_type', 'permanent')
+        if customer_more:
+            if customer_more.same_address:
+                resident_of = f"{customer_more.address or ''}, {customer_more.city or ''}, " \
+                              f"{customer_more.district or ''}, {customer_more.mandal or ''}, " \
+                              f"{customer_more.country or ''} - {customer_more.pincode or ''}"
+            else:
+                if address_type == "present":
+                    resident_of = f"{customer_more.present_address or ''}, {customer_more.present_city or ''}, " \
+                                  f"{customer_more.present_district or ''}, {customer_more.present_mandal or ''}, " \
+                                  f"{customer_more.present_country or ''} - {customer_more.present_pincode or ''}"
+                else:
+                    resident_of = f"{customer_more.address or ''}, {customer_more.city or ''}, " \
+                                  f"{customer_more.district or ''}, {customer_more.mandal or ''}, " \
+                                  f"{customer_more.country or ''} - {customer_more.pincode or ''}"
+
+        # Drone details
+        uin_numbers = invoice.uin_no.split(',') if invoice.uin_no else []
+        uin_numbers = [u.strip() for u in uin_numbers if u.strip()]
+        drone_infos = CompanyDroneModelInfo.objects.filter(uin_number__in=uin_numbers)
+
+        unique_names = list(dict.fromkeys([d.model_name for d in drone_infos]))
+        unique_uins = list(dict.fromkeys([d.uin_number for d in drone_infos]))
+
+        drone_name = ', '.join(unique_names)
+        drone_unique_code = ', '.join(unique_uins)
+
+        today = localtime().date()
+        agreement_no = f"PAV-AGRI-{today.strftime('%Y%m%d')}{str(customer.id).zfill(3)}"
+        from_date = today
+        to_date = today + relativedelta(months=66)
+
+        unique_invoice_map = {}
+        for inv in invoices:
+            inv_number = inv.invoice_number.strip().replace('\n', '').replace('\r', '')
+            if inv_number and inv_number not in unique_invoice_map:
+                unique_invoice_map[inv_number] = inv
+        unique_invoices = list(unique_invoice_map.values())
+        unique_invoices.sort(key=lambda x: x.created_at)
+
+        invoice_number_str = ','.join(unique_invoice_map.keys())
+        invoice_date_str = unique_invoices[0].created_at.strftime("%Y-%m-%d") if unique_invoices else ''
+        total_invoice_amount = sum(inv.total_invoice_amount for inv in unique_invoices)
+
+        # Context for template
+        context = {
+            "preview": {
+                "agreement_no": agreement_no,
+                "agreement_date": today.strftime("%Y-%m-%d"),
+                "agreement_day": today.strftime('%d'),
+                "agreement_month": today.strftime('%m'),
+                "agreement_year_full": today.year,
+                "agreement_year_short": str(today.year)[-2:],
+                "from_date": from_date.strftime("%Y-%m-%d"),
+                "to_date": to_date.strftime("%Y-%m-%d"),
+                "drone_name": drone_name,
+                "drone_unique_code": drone_unique_code,
+                "invoice_number_str": invoice_number_str,
+                "invoice_date_str": invoice_date_str,
+                "total_invoice_amount": total_invoice_amount,
+
+            },
+            "lessor": {
+                "name": kyc.pan_name if kyc else f"{customer.first_name} {customer.last_name}",
+                "age": calculate_age(kyc.pan_dob) if kyc and kyc.pan_dob else "",
+                "resident_of": resident_of,
+                "pan_number": kyc.pan_number if kyc else "",
+                "aadhaar_number": kyc.aadhar_number if kyc else "",
+                "signature_url": signature_url ,
+                "guardian_name": guardian_name,
+                "guardian_relation": guardian_relation,
+            },
+            "bank_details": {
+                "account_number": kyc.bank_account_number if kyc else "",
+                "account_holder_name": kyc.pan_name if kyc else "",
+                "bank_name": kyc.bank_name if kyc else "",
+                "ifsc_code": kyc.ifsc_code if kyc else ""
+            },
+            "nominees": [
+                {
+                    "sno": idx + 1,
+                    "nominee_name": f"{n.first_name} {n.last_name}",
+                    "nominee_relation": n.relation,
+                    "nominee_address": "",
+                    "nominee_share": n.share,
+                    "nominee_address":n.address,
+                }
+                for idx, n in enumerate(nominees)
+            ],
+            "company_details": {
+                "signature": "https://pavamaninvestdoc.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png",
+                "stamp": "https://pavamaninvestdoc.s3.ap-south-1.amazonaws.com/Pavaman_Stamp.png"
+            }
+        }
+
+        # Render PDF
+        html_string = render_to_string('agreement.html', context)
+        pdf_buffer = BytesIO()
+        HTML(string=html_string).write_pdf(target=pdf_buffer)
+        pdf_content = pdf_buffer.getvalue()
+
+        # Upload to S3
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            region_name=settings.AWS_S3_REGION_NAME
+        )
+
+        bucket_name = settings.AWS_STORAGE_BUCKET_NAME
+        customer_folder = f"customerdoc/{customer.id}_{(customer.first_name or '').lower()}{(customer.last_name or '').lower()}/"
+        timestamp_str = datetime.now().strftime('%Y%m%d%H%M%S')
+        s3_filename = f"{customer_folder}agreement_{agreement_no}_{timestamp_str}.pdf"
+
+        s3.upload_fileobj(
+            BytesIO(pdf_content),
+            bucket_name,
+            s3_filename,
+            ExtraArgs={'ContentType': 'application/pdf'}
+        )
+
+        s3_url = f"https://{bucket_name}.s3.{settings.AWS_S3_REGION_NAME}.amazonaws.com/{s3_filename}"
+
+        # Save agreement record
+        agreement_obj = AgreementDetails.objects.create(
+            agreement_no=agreement_no,
+            agreement_date=today,
+            agreement_day=today.strftime('%d'),
+            agreement_month=today.strftime('%m'),
+            agreement_year_full=today.year,
+            agreement_year_short=str(today.year)[-2:],
+            from_date=from_date,
+            to_date=to_date,
+            drone_name=drone_name,
+            drone_unique_code=drone_unique_code,
+            invoice_number=invoice_number_str,
+            invoice_date=invoice.created_at.date(),
+            witness_leassor="Leassor Name",
+            witness_lessee="Lessee Name",
+            customer=customer
+        )
+
+        return JsonResponse({
+            "message": "Agreement generated successfully",
+            "agreement_pdf_url": s3_url,
+            "agreement_no": agreement_obj.agreement_no
+        })
+
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+def preview_agreement_by_order(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST method allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        drone_order_id = data.get('drone_order_id')
+        customer_id = data.get('customer_id')
+
+        if not drone_order_id:
+            return JsonResponse({'error': 'drone_order_id is required'}, status=400)
+
+        payments = PaymentDetails.objects.filter(drone_order_id=drone_order_id).order_by('created_at')
+        if not payments.exists():
+            return JsonResponse({'error': 'No payments found for this drone_order_id'}, status=404)
+
+        payment = payments.first()
+        invoices = InvoiceDetails.objects.filter(payment=payment)
+        if not invoices.exists():
+            return JsonResponse({'error': 'Invoice not found for this payment'}, status=404)
+
+        invoice = invoices.first()
+        customer = invoice.customer
+
+        if customer_id and str(customer.id) != str(customer_id):
+            return JsonResponse({'error': 'Unauthorized access'}, status=403)
+
+        try:
+            kyc = KYCDetails.objects.get(customer=customer)
+        except KYCDetails.DoesNotExist:
+            kyc = None
+
+
+        # Get more details from correct customer object
+        # customer_more = CustomerMoreDetails.objects.filter(customer=customer).first()
+        # Get latest active details where signature exists
+        customer_more = (
+            CustomerMoreDetails.objects
+            .filter(customer=customer, status=1)  # ensure only active row
+            .exclude(signature_path__isnull=True)
+            .exclude(signature_path__exact="")
+            .order_by("-id")  # latest record first
+            .first()
+        )
+
+        customer_signature_url = ""
+        if customer_more and customer_more.signature_path:
+            # Match format_customer_data style
+            customer_signature_url = f"{settings.AWS_S3_BUCKET_URL}/{customer_more.signature_path}"
+
+        if not (customer_more and customer_more.guardian_name and customer_more.guardian_relation):
+            guardian_source = (
+                CustomerMoreDetails.objects
+                .filter(customer=customer)
+                .exclude(guardian_name__isnull=True)
+                .exclude(guardian_name__exact="")
+                .exclude(guardian_relation__isnull=True)
+                .exclude(guardian_relation__exact="")
+                .order_by("-id")
+                .first()
+            )
+            if guardian_source:
+                guardian_name = guardian_source.guardian_name
+                guardian_relation = guardian_source.guardian_relation
+            else:
+                guardian_name = ""
+                guardian_relation = ""
+        else:
+            guardian_name = customer_more.guardian_name
+            guardian_relation = customer_more.guardian_relation
+    
+        nominees = NomineeDetails.objects.filter(customer=customer)
+        more_details = CustomerMoreDetails.objects.filter(customer=customer).first()
+
+        uin_numbers = invoice.uin_no.split(',') if invoice.uin_no else []
+        uin_numbers = [u.strip() for u in uin_numbers if u.strip()]
+        drone_infos = CompanyDroneModelInfo.objects.filter(uin_number__in=uin_numbers)
+
+        drone_names = [d.model_name for d in drone_infos]
+        drone_uins = [d.uin_number for d in drone_infos]
+
+        unique_names = list(dict.fromkeys(drone_names))
+        unique_uins = list(dict.fromkeys(drone_uins))
+
+        drone_name = ', '.join(unique_names)
+        drone_unique_code = ', '.join(unique_uins)
+        drone_quantity = len(unique_uins)
+
+        today = localtime().date()
+        agreement_no = f"PAV-AGRI-{today.strftime('%Y%m%d')}{str(customer.id).zfill(3)}"
+        from_date = today
+        to_date = today + relativedelta(months=66)
+
+        unique_invoice_map = {}
+        for inv in invoices:
+            inv_number = inv.invoice_number.strip().replace('\n', '').replace('\r', '')
+            if inv_number and inv_number not in unique_invoice_map:
+                unique_invoice_map[inv_number] = inv
+        unique_invoices = list(unique_invoice_map.values())
+        unique_invoices.sort(key=lambda x: x.created_at)
+
+        invoice_number_str = ','.join(unique_invoice_map.keys())
+        invoice_date_str = unique_invoices[0].created_at.strftime("%Y-%m-%d") if unique_invoices else ''
+        total_invoice_amount = sum(inv.total_invoice_amount for inv in unique_invoices)
+
+        # Address construction
+        resident_of = ""
+        address_type = getattr(invoice, 'address_type', 'permanent')
+        if more_details:
+            if more_details.same_address:
+                resident_of = f"{more_details.address or ''}, {more_details.city or ''}, " \
+                              f"{more_details.district or ''}, {more_details.mandal or ''}, " \
+                              f"{more_details.country or ''} - {more_details.pincode or ''}"
+            else:
+                if address_type == "present":
+                    resident_of = f"{more_details.present_address or ''}, {more_details.present_city or ''}, " \
+                                  f"{more_details.present_district or ''}, {more_details.present_mandal or ''}, " \
+                                  f"{more_details.present_country or ''} - {more_details.present_pincode or ''}"
+                else:
+                    resident_of = f"{more_details.address or ''}, {more_details.city or ''}, " \
+                                  f"{more_details.district or ''}, {more_details.mandal or ''}, " \
+                                  f"{more_details.country or ''} - {more_details.pincode or ''}"
+        
+
+ 
+        return JsonResponse({
+            "preview": {
+                "agreement_no": agreement_no,
+                "agreement_date": today.strftime("%Y-%m-%d"),
+                "agreement_day": today.strftime('%d'),
+                "agreement_month": today.strftime('%m'),
+                "agreement_year_full": today.year,
+                "from_date": from_date.strftime("%Y-%m-%d"),
+                "to_date": to_date.strftime("%Y-%m-%d"),
+
+                "drone_quantity": drone_quantity,
+                "drone_name": drone_name,
+                "drone_unique_code": drone_unique_code,
+                "invoice_number_str": invoice_number_str,
+                "invoice_date_str": invoice_date_str,
+                "total_invoice_amount": total_invoice_amount,
+
+                "monthly_amount": 25000,
+                "lump_sum_amount": 2244000,
+                "residual_value": 156000,
+                "payment_mode": getattr(payment, 'payment_mode', ''),
+                "customer_signature_url": customer_signature_url,
+            },
+            "lessor": {
+                "name": kyc.pan_name if kyc else f"{customer.first_name} {customer.last_name}",
+                "guardian_name": guardian_name,
+                "guardian_relation": guardian_relation,
+                "age": calculate_age(kyc.pan_dob) if kyc and kyc.pan_dob else "",
+                "resident_of": resident_of,
+                "pan_number": kyc.pan_number if kyc else "",
+                "aadhaar_number": kyc.aadhar_number if kyc else ""
+            },
+            "bank_details": {
+                "account_number": kyc.bank_account_number if kyc else "",
+                "account_holder_name": kyc.pan_name if kyc else "",
+                "bank_name": kyc.bank_name if kyc else "",
+                "ifsc_code": kyc.ifsc_code if kyc else ""
+            },
+            "nominees": [
+                {
+                    "sno": idx + 1,
+                    "nominee_name": f"{n.first_name} {n.last_name}",
+                    "nominee_relation": n.relation,
+                    "nominee_share": n.share,
+                    "nominee_address":n.address,
+                } for idx, n in enumerate(nominees)
+            ],
+            "company_details":{
+                "signature": "https://pavamaninvestdoc.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png",
+                "stamp": "https://pavamaninvestdoc.s3.ap-south-1.amazonaws.com/Pavaman_Stamp.png",
+            }
+        })
+
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+
+import boto3
+from django.http import HttpResponseBadRequest, JsonResponse
+import json
+from botocore.exceptions import ClientError
+
+@csrf_exempt
+def download_agreement_by_order(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Only POST allowed'}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        drone_order_id = data.get('drone_order_id')
+        customer_id = data.get('customer_id')
+
+        if not drone_order_id:
+            return JsonResponse({'error': 'drone_order_id is required'}, status=400)
+
+        payment = PaymentDetails.objects.filter(drone_order_id=drone_order_id).first()
+        if not payment:
+            return JsonResponse({'error': 'No payment found for this order'}, status=404)
+
+        invoice = InvoiceDetails.objects.filter(payment=payment).first()
+        if not invoice:
+            return JsonResponse({'error': 'Invoice not found for this payment'}, status=404)
+
+        customer = invoice.customer
+        if customer_id and str(customer.id) != str(customer_id):
+            return JsonResponse({'error': 'Unauthorized access'}, status=403)
+
+        # Get latest agreement
+        agreement = AgreementDetails.objects.filter(customer=customer).order_by("-id").first()
+        if not agreement:
+            return JsonResponse({'error': 'Agreement not found. Please generate it first.'}, status=404)
+
+        first_name = customer.first_name or ''
+        last_name = customer.last_name or ''
+        customer_folder = f"customerdoc/{customer.id}_{first_name.lower()}{last_name.lower()}/"
+        s3_filename_prefix = f"{customer_folder}agreement_{agreement.agreement_no}"
+
+        # S3 client
+        s3_client = boto3.client(
+            's3',
+            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            region_name=settings.AWS_S3_REGION_NAME
+        )
+
+        # Find latest file in S3
+        s3_objects = s3_client.list_objects_v2(
+            Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+            Prefix=s3_filename_prefix
+        )
+
+        if 'Contents' not in s3_objects:
+            return JsonResponse({'error': 'Agreement file not found in S3'}, status=404)
+
+        latest_file = max(s3_objects['Contents'], key=lambda x: x['LastModified'])
+        s3_key = latest_file['Key']
+
+        # Generate pre-signed URL (valid for 1 hour)
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': settings.AWS_STORAGE_BUCKET_NAME, 'Key': s3_key},
+            ExpiresIn=3600
+        )
+
+        return JsonResponse({"download_url": presigned_url})
+
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
+    except ClientError as e:
+        return JsonResponse({'error': f'S3 Error: {str(e)}'}, status=500)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)

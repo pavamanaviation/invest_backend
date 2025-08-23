@@ -3788,33 +3788,34 @@ def send_invoice_bundle_email(customer, attachments):
         email_message.attach(attachment["filename"], attachment["file"].read(), 'application/pdf')
 
     email_message.send()
+
 @customer_login_required
 @csrf_exempt
 def view_invoices(request):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST allowed"}, status=405)
     try:
-        data = json.loads(request.body)
-        # customer_id = data.get("customer_id")       
         customer_id = request.session.get('customer_id')
         if not customer_id:
             return JsonResponse({"error": "Unauthorized"}, status=403)
-
-        drone_order_id = data.get("drone_order_id")
-        if not drone_order_id:
-            return JsonResponse({"error": "drone_order_id is required"}, status=400)
-
         customer = CustomerRegister.objects.get(id=customer_id)
-        invoices = InvoiceDetails.objects.filter(
-            customer_id=customer_id,
-            payment__drone_order_id=drone_order_id
-        ).order_by('serial_no')
+        payments = PaymentDetails.objects.filter(customer_id=customer_id)
+        if not payments.exists():
+            return JsonResponse({"error": "No payments found"}, status=404)
+        result = {}
+        for payment in payments:
+            invoices = InvoiceDetails.objects.filter(
+                payment=payment
+            ).order_by("serial_no")
 
-        if not invoices.exists():
+            if invoices.exists():
+                contexts = build_invoice_contexts(invoices, customer)
+                result.setdefault(str(payment.drone_order_id), []).extend(contexts)
+
+        if not result:
             return JsonResponse({"error": "No invoices found"}, status=404)
 
-        contexts = build_invoice_contexts(invoices, customer)
-        return JsonResponse({"invoices": contexts}, status=200)
+        return JsonResponse({"invoices_by_order": result}, status=200)
 
     except CustomerRegister.DoesNotExist:
         return JsonResponse({"error": "Customer not found"}, status=404)
@@ -3822,12 +3823,77 @@ def view_invoices(request):
         return JsonResponse({"error": str(e)}, status=500)
 @customer_login_required
 @csrf_exempt
+def download_invoice(request, invoice_id=None):
+    try:
+        data = json.loads(request.body)
+        customer_id = request.session.get('customer_id')
+        # customer_id = data.get("customer_id")
+        invoice_ids = data.get("invoice_ids", [])  # for accessory invoices
+
+        if not customer_id:
+            return JsonResponse({"error": "Unauthorized"}, status=403)
+
+        customer = CustomerRegister.objects.get(id=customer_id)
+
+        # --- Case 1: Accessory invoices with multiple IDs ---
+        if invoice_ids:
+            invoices = InvoiceDetails.objects.filter(
+                id__in=invoice_ids,
+                customer_id=customer_id,
+                invoice_type="accessory"
+            )
+
+            if not invoices.exists():
+                return JsonResponse({"error": "No accessory invoices found"}, status=404)
+
+            # Ensure all invoices belong to the same order
+            drone_order_ids = invoices.values_list("payment__drone_order_id", flat=True).distinct()
+            if len(drone_order_ids) > 1:
+                return JsonResponse({"error": "Invoices belong to different drone orders"}, status=400)
+
+            # Build contexts
+            contexts = [build_invoice_contexts([inv], customer)[0] for inv in invoices]
+
+            pdf_file = generate_receipt_pdf({"invoices": contexts}, "invoice_accessory.html")
+
+            response = HttpResponse(pdf_file.read(), content_type="application/pdf")
+            response['Content-Disposition'] = f'attachment; filename="accessory_invoice_{drone_order_ids[0]}.pdf"'
+            return response
+
+        # --- Case 2: Normal single invoice ---
+        if not invoice_id:
+            return JsonResponse({"error": "invoice_id required"}, status=400)
+
+        invoice = InvoiceDetails.objects.get(id=invoice_id, customer_id=customer_id)
+
+        if invoice.invoice_type == "drone":
+            template_name = "invoice_drone.html"
+            context = build_invoice_contexts([invoice], customer)[0]
+
+        elif invoice.invoice_type == "amc":
+            template_name = "invoice_amc.html"
+            context = build_invoice_contexts([invoice], customer)[0]
+
+        else:
+            return JsonResponse({"error": "Unknown or invalid invoice type for single download"}, status=400)
+
+        pdf_file = generate_receipt_pdf(context, template_name)
+
+        response = HttpResponse(pdf_file.read(), content_type="application/pdf")
+        response['Content-Disposition'] = f'attachment; filename="{invoice.invoice_type}_invoice_{invoice.id}.pdf"'
+        return response
+
+    except InvoiceDetails.DoesNotExist:
+        raise Http404("Invoice not found")
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+@customer_login_required
+@csrf_exempt
 def view_installment_receipt(request):
     if request.method != "POST":
         return JsonResponse({"error": "Only POST method allowed"}, status=405)
     try:
-        data = json.loads(request.body)
-        # customer_id = data.get("customer_id")
         customer_id = request.session.get('customer_id')
 
         if not customer_id:
@@ -3848,6 +3914,7 @@ def view_installment_receipt(request):
         receipts = []
         for payment in payments:
             receipts.append({
+                "payment_id": payment.id,
                 "payment_type": payment.payment_type,
                 "installment_number": payment.part_number,
                 "full_name": full_name,
@@ -3857,12 +3924,61 @@ def view_installment_receipt(request):
                 "drone_order_id": payment.drone_order_id,
                 "razorpay_payment_id": payment.razorpay_payment_id,
                 "created_at": format_datetime_ist(payment.created_at),
+                "drone_payment_status": payment.drone_payment_status
             })
 
         return JsonResponse({"receipts": receipts}, status=200)
 
     except Exception as e:
         print("View Customer Receipt Error:", str(e))
+        return JsonResponse({"error": str(e)}, status=500)
+
+@customer_login_required    
+@csrf_exempt
+def download_installment_receipt(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        customer_id = request.session.get('customer_id')
+        payment_id = data.get("payment_id")
+
+        if not customer_id:
+            return JsonResponse({"error": "Unauthorized, session expired or not logged in"}, status=401)
+        if not payment_id:
+            return JsonResponse({"error": "payment_id is required"}, status=400)
+
+        payment = PaymentDetails.objects.filter(
+            customer_id=customer_id,
+            id=payment_id,
+            drone_payment_status='captured',
+            payment_type='installment',
+            status=1
+        ).first()
+
+        if not payment:
+            return JsonResponse({"error": "No such paid installment found"}, status=404)
+        kyc = KYCDetails.objects.filter(customer_id=customer_id).first()
+        full_name = kyc.pan_name if kyc else "Customer"
+        context = {
+            "payment_type": payment.payment_type,
+            "installment_number": payment.part_number,
+            "full_name": full_name,
+            "payment_mode": payment.payment_mode,
+            "amount": float(payment.amount),
+            "payment_status": payment.payment_status,
+            "drone_order_id": payment.drone_order_id,
+            "razorpay_payment_id": payment.razorpay_payment_id,
+            "created_at": format_datetime_ist(payment.created_at),
+            "drone_payment_status": payment.drone_payment_status,
+        }
+        pdf_file = generate_receipt_pdf(context, "receipt_pdf.html")
+        response = HttpResponse(pdf_file, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="receipt_{payment.drone_order_id}.pdf"'
+        return response
+
+    except Exception as e:
+        print("Download Receipt Error:", str(e))
         return JsonResponse({"error": str(e)}, status=500)
 @customer_login_required
 @csrf_exempt
@@ -3871,8 +3987,6 @@ def payment_history(request):
         return JsonResponse({"error": "Only POST method allowed"}, status=405)
 
     try:
-        data = json.loads(request.body)
-        # customer_id = data.get("customer_id")
         customer_id = request.session.get('customer_id')
         if not customer_id:
             return JsonResponse({"error": "Unauthorized, session expired or not logged in"}, status=401)
@@ -4667,7 +4781,7 @@ def preview_agreement_by_order(request):
     
 
 import boto3
-from django.http import HttpResponseBadRequest, JsonResponse
+from django.http import Http404, HttpResponseBadRequest, JsonResponse
 import json
 from botocore.exceptions import ClientError
 

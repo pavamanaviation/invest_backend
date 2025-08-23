@@ -1,0 +1,227 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tax Invoice</title>
+   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    @page {
+      size: A4;
+      margin: 2cm;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      color: #000;
+      font-size: 14px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      border: 1px solid #000;
+      padding: 6px 10px;
+      text-align: left;
+    }
+
+    .header {
+      text-align: center;
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 10px;
+    }
+
+    .section-title {
+      background-color: #d9f0d9;
+      font-weight: bold;
+      text-align: left;
+      padding: 5px 10px;
+    }
+
+    .no-border {
+      border: none !important;
+    }
+
+    .right {
+      text-align: right;
+    }
+
+    .center {
+      text-align: center;
+    }
+
+    .signature {
+      margin-top: 40px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .footer-text {
+      font-size: 12px;
+      margin-top: 10px;
+    }
+
+    .logo {
+      width: 130px;
+      float: right;
+    }
+
+    .invoice-box {
+      border: 1px solid #000;
+      padding: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">TAX INVOICE</div>
+
+  <table>
+    <tr>
+      <td style="width: 33%; vertical-align: top;">
+        <strong>Billing Address:</strong><br>
+        Pavaman Aviation Private Limited<br>
+        2nd Floor, Kapil Kavuri Hub<br>
+        Financial District, Nanakramguda, Gachi Bowli<br>
+        Hyderabad - 500 032<br>
+        GST No: <strong>36AAMCP6691B1Z5</strong>
+      </td>
+      <td style="width: 33%; vertical-align: top;">
+        <strong>Invoice No. & Date:</strong><br>
+        PAV-INV-25-26/06/018<br>
+        Dated: 05.06.25
+      </td>
+      <td style="width: 33%; text-align: right;">
+        <img src="https://your-bucket.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png" style="width: 120px;" />
+      </td>
+    </tr>
+  </table>
+
+  <br>
+
+  <table>
+    <tr class="section-title">
+      <td>S. No</td>
+      <td>Description</td>
+      <td>HSN</td>
+      <td>UOM</td>
+      <td>Qty</td>
+      <td>Rate per unit (₹)</td>
+      <td>Total (₹)</td>
+    </tr>
+    <tr>
+      <td>1</td>
+      <td>Batteries (8 Nos) - 1 Set = 2 Batteries</td>
+      <td>-</td>
+      <td>Set</td>
+      <td class="right">4.00</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>DG Set</td>
+      <td>-</td>
+      <td>No</td>
+      <td class="right">1.00</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Water Tank</td>
+      <td>-</td>
+      <td>No</td>
+      <td class="right">1.00</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+    </tr>
+
+    <tr>
+      <td colspan="5" class="no-border"></td>
+      <td><strong>Total</strong></td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td colspan="5" class="no-border"></td>
+      <td>Taxable Amount</td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td colspan="5" class="no-border"></td>
+      <td>CGST</td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td colspan="5" class="no-border"></td>
+      <td>SGST</td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td colspan="5" class="no-border"></td>
+      <td>IGST</td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td colspan="5" class="no-border"></td>
+      <td><strong>Total Invoice Amount</strong></td>
+      <td class="right">-</td>
+    </tr>
+  </table>
+
+  <br>
+
+  <table>
+    <tr>
+      <td><strong>Total Invoice Amount (₹):</strong></td>
+      <td class="right">-</td>
+      <td colspan="4"><em>Two Lakhs Seventy-Four Thousand Five Hundred only</em></td>
+    </tr>
+  </table>
+
+  <br>
+
+  <div class="section-title">TAX DETAILS:</div>
+  <table>
+    <tr>
+      <th>Tax rate</th>
+      <th>Taxable Invoice %</th>
+      <th>TAXABLE AMOUNT (₹)</th>
+      <th>CGST AMOUNT (₹)</th>
+      <th>SGST AMOUNT (₹)</th>
+      <th>IGST AMOUNT (₹)</th>
+      <th>TOTAL (₹)</th>
+    </tr>
+    <tr>
+      <td>18%</td>
+      <td>100%</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+    </tr>
+    <tr>
+      <td colspan="2"><strong>TOTAL</strong></td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+      <td class="right">-</td>
+    </tr>
+  </table>
+
+  <div class="signature">
+    <div><strong>For Pavaman Aviation Private Limited</strong></div>
+    <div class="right">
+      <img src="https://your-bucket.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png" height="50" /><br>
+      <strong>Authorised Signatory</strong>
+    </div>
+  </div>
+
+</body>
+</html>

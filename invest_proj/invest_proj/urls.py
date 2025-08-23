@@ -21,7 +21,7 @@ from invest_app.views import (add_role, view_kyc_doc,view_roles,delete_role,upda
 verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details,upload_drone_models,view_drone_models_by_admin)
 
 # from invest_app.views import check_indian_time 
-from invest_app.customer_views import (create_amc_invoice, create_drone_installment_order, customer_register, get_pan_verification_status, payment_history, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
+from invest_app.customer_views import (create_amc_invoice, create_drone_installment_order, customer_register, download_installment_receipt, download_invoice, get_pan_verification_status, payment_history, verify_aadhar_document,verify_customer_otp,customer_register_sec_phase,
 customer_login,verify_pan_document,get_pan_source_verification_status,get_aadhar_verification_status,
 bank_account_verification_view,customer_more_details,customer_profile_view,create_drone_installment_order,
 upload_pdf_document,create_drone_order,razorpay_callback,payment_status_check,preview_customer_details,
@@ -89,8 +89,11 @@ urlpatterns = [
     path('create-amc-invoice',create_amc_invoice,name="create_amc_invoice"),
     path('create-invoice-combined',create_invoice_combined,name='create_invoice_combined'),
     path('view-invoices',view_invoices, name='view_invoices'),
+    path('download-invoice',download_invoice,name='download_invoice'),
+    path("download-invoice/<int:invoice_id>/",download_invoice, name="download_invoice"),
     path('view-receipt', view_installment_receipt, name='view_installment_receipt'),
-    path('payment_history',payment_history,name='payment_history'),
+    path('download-receipt',download_installment_receipt,name='download_installment_receipt'),
+    path('payment-history',payment_history,name='payment_history'),
     #role urls
     path('get-models-names',get_all_models_by_role,name='get_all_models_by_role'),
     path('get-details',get_models_data_by_role,name='get_models_data_by_role'),

@@ -29,7 +29,6 @@ def validate_otp_and_expiry(user, otp):
 
     return None  # OTP is valid
 
-
 @csrf_exempt
 def verify_otp(request):
     if request.method != 'POST':
@@ -74,7 +73,8 @@ def verify_otp(request):
 
                 # OTP is valid, clear it and update session
                 user.otp = None
-                user.save(update_fields=["otp"])
+                user.changed_on = None
+                user.save(update_fields=["otp", "changed_on"])
 
                 request.session[user_type["session_key"]] = user.id
                 request.session.save()
@@ -1221,3 +1221,89 @@ def view_drone_models_by_admin(request):
 
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+# @csrf_exempt
+# def drone_status(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST method allowed"}, status=405)
+#     try:
+#         data = json.loads(request.body)
+#         admin_id = data.get('admin_id')
+#         role_id = data.get('role_id')
+#         uin_number = data.get('uin_number')
+#         update_type = data.get('update_type')
+
+#         if not uin_number:
+#             return JsonResponse({"error": "Missing uin_number"}, status=400)
+#         if not (admin_id or role_id):
+#             return JsonResponse({"error": "Either admin_id or role_id is required"}, status=400)
+#         if update_type not in ["request", "accept"]:
+#             return JsonResponse({"error": "update_type must be either 'request' or 'accept'"}, status=400)
+
+#         invoice_qs = InvoiceDetails.objects.filter(drone_uin_no=uin_number)
+#         if admin_id:
+#             invoice_qs = invoice_qs.filter(admin_id=admin_id)
+#         if role_id:
+#             invoice_qs = invoice_qs.filter(role_id=role_id)
+
+#         invoice = invoice_qs.first()
+#         if not invoice:
+#             return JsonResponse({"error": "No invoice found for given details"}, status=404)
+
+#         customer = invoice.customer
+#         if not customer:
+#             return JsonResponse({"error": "No customer linked with this invoice"}, status=404)
+
+#         drone_model = CompanyDroneModelInfo.objects.filter(
+#             uin_number=uin_number,
+#             assign_status=1
+#         )
+#         if admin_id:
+#             drone_model = drone_model.filter(admin_id=admin_id)
+#         if role_id:
+#             drone_model = drone_model.filter(role_id=role_id)
+
+#         drone_model = drone_model.first()
+#         if not drone_model:
+#             return JsonResponse({"error": "No assigned drone model found for given details"}, status=404)
+
+#         req = DroneRequest.objects.filter(drone_model=drone_model).first()
+#         if not req:
+#             return JsonResponse({"error": "No drone request found for this drone"}, status=404)
+
+#         if update_type == "request":
+#             req.request_status = 1
+#             req.request_on = timezone.now()
+#             req.save(update_fields=['request_status', 'request_on'])
+
+#             return JsonResponse({
+#                 "message": "Drone request status updated successfully.",
+#                 "drone_uin_number": uin_number,
+#                 "request_status": req.request_status,
+#                 "request_on": req.request_on,
+#                 "customer": {
+#                     "id": customer.id,
+#                     "name": f"{customer.first_name} {customer.last_name}",
+#                     "email": customer.email
+#                 }
+#             }, status=200)
+
+#         elif update_type == "accept":
+#             req.accept_status = 1
+#             req.accepted_on = timezone.now()
+#             req.save(update_fields=['accept_status', 'accepted_on'])
+
+#             return JsonResponse({
+#                 "message": "Drone accept status updated successfully.",
+#                 "drone_uin_number": uin_number,
+#                 "accept_status": req.accept_status,
+#                 "accepted_on": req.accepted_on,
+#                 "customer": {
+#                     "id": customer.id,
+#                     "name": f"{customer.first_name} {customer.last_name}",
+#                     "email": customer.email
+#                 }
+#             }, status=200)
+
+#     except Exception as e:
+#         return JsonResponse({"error": str(e)}, status=500)

@@ -71,7 +71,7 @@ class CustomerRegister(models.Model):
     def is_otp_valid(self):
         """Check if OTP is still valid (within 2 minutes)."""
         if self.changed_on:
-            expiry_time = self.changed_on + timedelta(minutes=2)
+            expiry_time = self.changed_on + timedelta(minutes=3)
             return timezone.now() < expiry_time
         return False
 
@@ -273,3 +273,16 @@ class AgreementDetails(models.Model):
 
     def __str__(self):
         return f"Agreement {self.agreement_no}"
+# class DroneRequest(models.Model):
+#     customer = models.ForeignKey(CustomerRegister, on_delete=models.CASCADE)
+#     admin = models.ForeignKey(Admin, on_delete=models.CASCADE)
+#     role= models.ForeignKey(Role, on_delete=models.CASCADE)    
+#     agreement= models.ForeignKey(AgreementDetails, on_delete=models.CASCADE, null=True, blank=True)
+#     request_status = models.IntegerField(default=0)
+#     accept_status = models.IntegerField(default=0)
+#     requested_on = models.DateTimeField(null=True, blank=True)     
+#     accepted_on = models.DateTimeField(null=True, blank=True)
+#     created_on = models.DateTimeField(auto_now=True)
+
+
+   

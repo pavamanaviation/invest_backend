@@ -1,10 +1,10 @@
-
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <title>Tax Invoice</title>
-   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     @page {
       size: A4;
@@ -22,7 +22,8 @@
       border-collapse: collapse;
     }
 
-    th, td {
+    th,
+    td {
       border: 1px solid #000;
       padding: 6px 10px;
       text-align: left;
@@ -76,33 +77,32 @@
     }
   </style>
 </head>
+
 <body>
 
   <div class="header">TAX INVOICE</div>
 
   <table>
-  <tr>
-    <td style="width: 33%; vertical-align: top;">
-      <strong>Billing Address:</strong><br>
-      Pavaman Aviation Private Limited<br>
-      2nd Floor, Kapil Kavuri Hub<br>
-      Financial District, Nanakramguda, Gachi Bowli<br>
-      Hyderabad - 500 032<br>
-      GST No: <strong>36AAMCP6691B1Z5</strong>
-    </td>
-    <td style="width: 33%; vertical-align: top;">
-      <strong>Invoice No. & Date:</strong><br>
-{{ invoice.invoice_number }}<br>
-Dated: {{ invoice.invoice_date }}
-      <!-- <strong>Invoice No. & Date:</strong><br>
-      PAV-INV-25-26/06/017<br>
-      Dated: 05.06.25 -->
-    </td>
-    <td style="width: 33%; text-align: right;">
-      <img src="https://your-bucket.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png" style="width: 120px;" />
-    </td>
-  </tr>
-</table>
+    <tr>
+      <td style="width: 33%; vertical-align: top;">
+        <strong>Billing Address:</strong><br>
+        Pavaman Aviation Private Limited<br>
+        2nd Floor, Kapil Kavuri Hub<br>
+        Financial District, Nanakramguda, Gachi Bowli<br>
+        Hyderabad - 500 032<br>
+        GST No: <strong>36AAMCP6691B1Z5</strong>
+      </td>
+      <td style="width: 33%; vertical-align: top;">
+        <strong>Invoice No. & Date:</strong><br>
+        {{ invoice.invoice_number }}<br>
+        Dated: {{ invoice.invoice_date }}
+
+      </td>
+      <td style="width: 33%; text-align: right;">
+        <img src="https://your-bucket.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png" style="width: 120px;" />
+      </td>
+    </tr>
+  </table>
 
 
   <br>
@@ -117,47 +117,55 @@ Dated: {{ invoice.invoice_date }}
       <td>Rate per unit (₹)</td>
       <td>Total (₹)</td>
     </tr>
+    
+    {% for item in invoice.items %}
+
+
+
     <tr>
-      <td>1</td>
-      <td>
-        TEJA-S (UIN Drone)<br>
-        <strong>UIN NO:</strong> UA00SJHS0TC
+      <td>{{ forloop.counter }}</td>
+       <td>
+        {{ item.description }}<br>
+        {% if item.uin_no %}<strong>UIN NO:</strong> {{ item.uin_no }}{% endif %}
       </td>
-      <td>88062300</td>
-      <td>No</td>
+      <td>{{ item.hsn_sac_code }}</td>
+      <td>{{ item.uom }}</td>
       <td>1.00</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
+      <td class="right">{{ item.parts_quantity }}</td>
+      <td class="right">{{ item.rate_per_unit }}</td>
+            <td class="right">{{ item.total_amount }}</td>
+
     </tr>
+    {% endfor %}
     <tr>
       <td colspan="5" class="no-border"></td>
       <td><strong>Total</strong></td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.total_amount }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td>Taxable Amount</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.total_taxable_amount }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td>CGST</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.cgst }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td>SGST</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.sgst }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td>IGST</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.igst }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td><strong>Total Invoice Amount</strong></td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.total_invoice_amount }}</td>
     </tr>
   </table>
 
@@ -166,8 +174,8 @@ Dated: {{ invoice.invoice_date }}
   <table>
     <tr>
       <td><strong>Total Invoice Amount (₹):</strong></td>
-      <td class="right">-</td>
-      <td colspan="4"><em>Three Lakhs Twenty-Five Thousand Five Hundred only</em></td>
+      <td class="right">{{ invoice.total_invoice_amount }}</td>
+      <td colspan="4"><em>{{ invoice.total_invoice_amount_words }}</em></td>
     </tr>
   </table>
 
@@ -185,22 +193,23 @@ Dated: {{ invoice.invoice_date }}
       <th>TOTAL (₹)</th>
     </tr>
     <tr>
-      <td>5%</td>
+      <td>{{ invoice.tax_rate }}%</td>
       <td>100%</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.total_taxable_amount }}</td>
+      <td class="right">{{ invoice.cgst }}</td>
+      <td class="right">{{ invoice.sgst }}</td>
+      <td class="right">{{ invoice.igst }}</td>
+      <td class="right">{{ invoice.total_invoice_amount }}</td>
     </tr>
     <tr>
       <td colspan="2"><strong>TOTAL</strong></td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
+          <td class="right">{{ invoice.total_taxable_amount }}</td>
+      <td class="right">{{ invoice.cgst }}</td>
+      <td class="right">{{ invoice.sgst }}</td>
+      <td class="right">{{ invoice.igst }}</td>
+      <td class="right">{{ invoice.total_invoice_amount }}</td>
     </tr>
+
   </table>
 
   <div class="signature">
@@ -212,4 +221,5 @@ Dated: {{ invoice.invoice_date }}
   </div>
 
 </body>
+
 </html>

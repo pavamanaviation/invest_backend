@@ -92,8 +92,8 @@
       </td>
       <td style="width: 33%; vertical-align: top;">
         <strong>Invoice No. & Date:</strong><br>
-        PAV-INV-25-26/06/018<br>
-        Dated: 05.06.25
+         {{ invoice.invoice_number }}<br>
+        Dated: {{ invoice.invoice_date }}
       </td>
       <td style="width: 33%; text-align: right;">
         <img src="https://your-bucket.s3.ap-south-1.amazonaws.com/Pavaman_Sign.png" style="width: 120px;" />
@@ -113,63 +113,47 @@
       <td>Rate per unit (₹)</td>
       <td>Total (₹)</td>
     </tr>
+    {% for item in invoice.items %}
     <tr>
-      <td>1</td>
-      <td>Batteries (8 Nos) - 1 Set = 2 Batteries</td>
-      <td>-</td>
-      <td>Set</td>
-      <td class="right">4.00</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
+      <td>{{ forloop.counter }}</td>
+      <td>{{ item.description }}</td>
+      <td>{{ item.hsn|default:"-" }}</td>
+      <td>{{ item.uom }}</td>
+      <td class="right">{{ item.qty }}</td>
+      <td class="right">{{ item.rate }}</td>
+      <td class="right">{{ item.total }}</td>
     </tr>
-    <tr>
-      <td>2</td>
-      <td>DG Set</td>
-      <td>-</td>
-      <td>No</td>
-      <td class="right">1.00</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-    </tr>
-    <tr>
-      <td>3</td>
-      <td>Water Tank</td>
-      <td>-</td>
-      <td>No</td>
-      <td class="right">1.00</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-    </tr>
-
+    {% endfor %}
     <tr>
       <td colspan="5" class="no-border"></td>
       <td><strong>Total</strong></td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.subtotal }}</td>
     </tr>
-    <tr>
+      <tr>
       <td colspan="5" class="no-border"></td>
       <td>Taxable Amount</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.taxable_amount }}</td>
     </tr>
-    <tr>
+
+      <tr>
       <td colspan="5" class="no-border"></td>
       <td>CGST</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.cgst_amount }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td>SGST</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.sgst_amount }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td>IGST</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.igst_amount }}</td>
     </tr>
     <tr>
       <td colspan="5" class="no-border"></td>
       <td><strong>Total Invoice Amount</strong></td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.total_amount }}</td>
     </tr>
   </table>
 
@@ -178,8 +162,8 @@
   <table>
     <tr>
       <td><strong>Total Invoice Amount (₹):</strong></td>
-      <td class="right">-</td>
-      <td colspan="4"><em>Two Lakhs Seventy-Four Thousand Five Hundred only</em></td>
+      <td class="right">{{ invoice.total_amount }}</td>
+      <td colspan="4"><em>{{ invoice.amount_in_words }}</em></td>
     </tr>
   </table>
 
@@ -196,22 +180,25 @@
       <th>IGST AMOUNT (₹)</th>
       <th>TOTAL (₹)</th>
     </tr>
+        {% for tax in invoice.tax_details %}
     <tr>
-      <td>18%</td>
-      <td>100%</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
+      <td>{{ tax.rate }}%</td>
+      <td>{{ tax.percentage }}%</td>
+      <td class="right">{{ tax.taxable_amount }}</td>
+      <td class="right">{{ tax.cgst }}</td>
+      <td class="right">{{ tax.sgst }}</td>
+      <td class="right">{{ tax.igst }}</td>
+      <td class="right">{{ tax.total }}</td>
     </tr>
-    <tr>
+    {% endfor %}
+
+     <tr>
       <td colspan="2"><strong>TOTAL</strong></td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
-      <td class="right">-</td>
+      <td class="right">{{ invoice.tax_total.taxable_amount }}</td>
+      <td class="right">{{ invoice.tax_total.cgst }}</td>
+      <td class="right">{{ invoice.tax_total.sgst }}</td>
+      <td class="right">{{ invoice.tax_total.igst }}</td>
+      <td class="right">{{ invoice.tax_total.total }}</td>
     </tr>
   </table>
 

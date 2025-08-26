@@ -1,7 +1,10 @@
 from invest_app.utils.shared_imports import *
 from invest_app.utils.s3_helper import upload_to_s3, generate_presigned_url, get_next_folder_and_filename
 from django.utils.dateparse import parse_date
-from .models import (Admin, CustomerRegister, KYCDetails, CustomerMoreDetails,
+
+from invest_app.customer_views import generate_otp, send_otp_email
+from invest_app.utils.msg91 import send_bulk_sms
+from .models import (Admin, AgreementDetails, CustomerRegister, DroneOperation, InvoiceDetails, KYCDetails, CustomerMoreDetails,
                       NomineeDetails, PaymentDetails, Permission, Role,CompanyDroneModelInfo)
 import pandas as pd
 import re
@@ -14,6 +17,96 @@ MODEL_LABELS = {
                 "PaymentDetails": "Payment Details"
             }
 
+# def validate_otp_and_expiry(user, otp):
+#     print("User OTP:", user.otp, "Provided OTP:", otp)
+#     print("User Changed On:", user.changed_on)
+#     print("Current Time:", timezone.now())
+#     print("Expiry Time:", user.changed_on + timedelta(minutes=2) if user.changed_on else "N/A")
+#     print(user)
+#     if not user.changed_on or timezone.now() > user.changed_on + timedelta(minutes=2):
+#         return "OTP has expired. Please request a new one."
+
+#     if not user.otp or not str(user.otp).isdigit():
+#         return "OTP is invalid or missing. Please request a new one."
+
+#     try:
+#         if int(user.otp) != int(otp):
+#             return "Invalid OTP."
+#     except ValueError:
+#         return "Invalid OTP format."
+
+#     return None  # OTP is valid
+
+# @csrf_exempt
+# def verify_otp(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST method is allowed."}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         otp = data.get('otp')
+#         email = data.get('email', '').strip()
+#         mobile_no = data.get('mobile_no', '').strip()
+
+#         if not otp or not (email or mobile_no):
+#             return JsonResponse({"error": "OTP and email or mobile number are required."}, status=400)
+
+#         # Define user models and session mappings
+#         user_types = [
+#             {
+#                 "model": CustomerRegister,
+#                 "session_key": "customer_id",
+#                 "extra_check": lambda u: u.register_status == 1 and u.account_status == 1,
+#                 "error": "Account is not active or verified."
+#             },
+#             {"model": Admin, "session_key": "admin_id"},
+#             {"model": Role, "session_key": "role_id"}
+#         ]
+
+#         for user_type in user_types:
+#             model = user_type["model"]
+#             user = model.objects.filter(
+#                 Q(email=email) | Q(mobile_no=mobile_no)
+#             ).first()
+
+#             if user:
+#                 # Validate OTP
+#                 error = validate_otp_and_expiry(user, otp)
+#                 if error:
+#                     return JsonResponse({"error": error}, status=400)
+
+#                 # Extra user-type specific validation
+#                 if "extra_check" in user_type and not user_type["extra_check"](user):
+#                     return JsonResponse({"error": user_type["error"]}, status=403)
+
+#                 # OTP is valid, clear it and update session
+#                 user.otp = None
+#                 user.changed_on = None
+#                 user.save(update_fields=["otp", "changed_on"])
+
+#                 request.session[user_type["session_key"]] = user.id
+#                 request.session.save()
+
+#                 # Construct response
+#                 response = {
+#                     "message": f"OTP verified and login successful ({user_type['session_key'].split('_')[0].capitalize()}).",
+#                     user_type["session_key"]: user.id,
+#                     "email": user.email,
+#                     "session_id": request.session.session_key
+#                 }
+
+#                 if user_type["session_key"] == "customer_id":
+#                     response["register_status"] = user.register_status
+#                     response["account_status"] = user.account_status
+
+#                 return JsonResponse(response, status=200)
+
+#         return JsonResponse({"error": "Account not found."}, status=404)
+
+#     except json.JSONDecodeError:
+#         return JsonResponse({"error": "Invalid JSON format."}, status=400)
+#     except Exception as e:
+#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 def validate_otp_and_expiry(user, otp):
     if not user.changed_on or timezone.now() > user.changed_on + timedelta(minutes=2):
         return "OTP has expired. Please request a new one."
@@ -26,14 +119,12 @@ def validate_otp_and_expiry(user, otp):
             return "Invalid OTP."
     except ValueError:
         return "Invalid OTP format."
-
-    return None  # OTP is valid
+    return None 
 
 @csrf_exempt
 def verify_otp(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST method is allowed."}, status=405)
-
     try:
         data = json.loads(request.body)
         otp = data.get('otp')
@@ -43,60 +134,149 @@ def verify_otp(request):
         if not otp or not (email or mobile_no):
             return JsonResponse({"error": "OTP and email or mobile number are required."}, status=400)
 
-        # Define user models and session mappings
-        user_types = [
-            {
-                "model": CustomerRegister,
-                "session_key": "customer_id",
-                "extra_check": lambda u: u.register_status == 1 and u.account_status == 1,
-                "error": "Account is not active or verified."
-            },
-            {"model": Admin, "session_key": "admin_id"},
-            {"model": Role, "session_key": "role_id"}
-        ]
+        # ----------------- CUSTOMER -----------------
+        customer = CustomerRegister.objects.filter(
+            Q(email=email) | Q(mobile_no=mobile_no), account_status=1, register_status=1
+        ).first()
+        if customer:
+            error = validate_otp_and_expiry(customer, otp)
+            if error:
+                return JsonResponse({"error": error}, status=400)
 
-        for user_type in user_types:
-            model = user_type["model"]
-            user = model.objects.filter(
-                Q(email=email) | Q(mobile_no=mobile_no)
-            ).first()
+            customer.otp = None
+            customer.changed_on = None
+            customer.save(update_fields=["otp", "changed_on"])
 
-            if user:
-                # Validate OTP
-                error = validate_otp_and_expiry(user, otp)
-                if error:
-                    return JsonResponse({"error": error}, status=400)
+            request.session["customer_id"] = customer.id
+            request.session.save()
 
-                # Extra user-type specific validation
-                if "extra_check" in user_type and not user_type["extra_check"](user):
-                    return JsonResponse({"error": user_type["error"]}, status=403)
+            return JsonResponse({
+                "message": "OTP verified and login successful (Customer).",
+                "customer_id": customer.id,
+                "email": customer.email,
+                "register_status": customer.register_status,
+                "account_status": customer.account_status,
+                "session_id": request.session.session_key
+            }, status=200)
 
-                # OTP is valid, clear it and update session
-                user.otp = None
-                user.changed_on = None
-                user.save(update_fields=["otp", "changed_on"])
+        # ----------------- ADMIN -----------------
+        admin = Admin.objects.filter(
+            Q(email=email) | Q(mobile_no=mobile_no), status=1
+        ).first()
+        if admin:
+            error = validate_otp_and_expiry(admin, otp)
+            if error:
+                return JsonResponse({"error": error}, status=400)
 
-                request.session[user_type["session_key"]] = user.id
-                request.session.save()
+            admin.otp = None
+            admin.changed_on = None
+            admin.save(update_fields=["otp", "changed_on"])
 
-                # Construct response
-                response = {
-                    "message": f"OTP verified and login successful ({user_type['session_key'].split('_')[0].capitalize()}).",
-                    user_type["session_key"]: user.id,
-                    "email": user.email,
-                    "session_id": request.session.session_key
-                }
+            request.session["admin_id"] = admin.id
+            request.session.save()
 
-                if user_type["session_key"] == "customer_id":
-                    response["register_status"] = user.register_status
-                    response["account_status"] = user.account_status
+            return JsonResponse({
+                "message": "OTP verified and login successful (Admin).",
+                "admin_id": admin.id,
+                "email": admin.email,
+                "name": admin.name,
+                "session_id": request.session.session_key
+            }, status=200)
 
-                return JsonResponse(response, status=200)
+        # ----------------- ROLE (EMPLOYEE) -----------------
+        role = Role.objects.filter(
+            Q(email=email) | Q(mobile_no=mobile_no), status=1, delete_status=False
+        ).first()
+        if role:
+            error = validate_otp_and_expiry(role, otp)
+            if error:
+                return JsonResponse({"error": error}, status=400)
 
-        return JsonResponse({"error": "Account not found."}, status=404)
+            role.otp = None
+            role.changed_on = None
+            role.save(update_fields=["otp", "changed_on"])
+
+            request.session["role_id"] = role.id
+            request.session.save()
+
+            return JsonResponse({
+                "message": "OTP verified and login successful (Role).",
+                "role_id": role.id,
+                "email": role.email,
+                "full_name": f"{role.first_name} {role.last_name}".strip(),
+                "session_id": request.session.session_key
+            }, status=200)
+
+        # If none found
+        return JsonResponse({"error": "Account not found or not active."}, status=404)
 
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON format."}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+@csrf_exempt
+def employee_login(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST allowed."}, status=405)
+    try:
+        data = json.loads(request.body)
+        email = data.get('email')
+        mobile_no = data.get('mobile_no')
+
+        if not email and not mobile_no:
+            return JsonResponse({"error": "Provide email or mobile number."}, status=400)
+        admin = None
+        if email:
+            admin = Admin.objects.filter(email=email, status=1).first()
+        if not admin and mobile_no:
+            admin = Admin.objects.filter(mobile_no=mobile_no, status=1).first()
+
+        if admin:
+            otp = generate_otp()
+            admin.otp = otp
+            admin.otp_send_type = "email" if email else "mobile"
+            admin.changed_on = timezone.now()
+            admin.save(update_fields=["otp", "otp_send_type", "changed_on"])
+
+            if email:
+                send_otp_email(email, admin.name, otp)
+            if mobile_no:
+                send_bulk_sms([mobile_no], otp)
+
+            return JsonResponse({
+                "message": "OTP sent for admin login. It is valid for 2 minutes.",
+                "admin_id": admin.id,
+                "status_code": 200
+            }, status=200)
+        role = None
+        if email:
+            role = Role.objects.filter(email=email, status=1, delete_status=False).first()
+        if not role and mobile_no:
+            role = Role.objects.filter(mobile_no=mobile_no, status=1, delete_status=False).first()
+
+        if role:
+            otp = generate_otp()
+            role.otp = otp
+            role.otp_send_type = "email" if email else "mobile"
+            role.changed_on = timezone.now()
+            role.save(update_fields=["otp", "otp_send_type", "changed_on"])
+
+            full_name = f"{role.first_name} {role.last_name}".strip()
+
+            if email:
+                send_otp_email(email, full_name, otp)
+            if mobile_no:
+                send_bulk_sms([mobile_no], otp)
+
+            return JsonResponse({
+                "message": "OTP sent for employee login. It is valid for 2 minutes.",
+                "role_id": role.id,
+                "status_code": 200
+            }, status=200)
+
+        return JsonResponse({"error": "Staff account not found or not verified."}, status=404)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
     
@@ -1221,89 +1401,143 @@ def view_drone_models_by_admin(request):
 
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+@csrf_exempt
+def drone_status(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        admin_id = data.get('admin_id')
+        role_id = data.get('role_id')
+        uin_no = data.get('uin_no')
+        update_type = data.get('update_type')
 
-# @csrf_exempt
-# def drone_status(request):
-#     if request.method != 'POST':
-#         return JsonResponse({"error": "Only POST method allowed"}, status=405)
-#     try:
-#         data = json.loads(request.body)
-#         admin_id = data.get('admin_id')
-#         role_id = data.get('role_id')
-#         uin_number = data.get('uin_number')
-#         update_type = data.get('update_type')
+        if not uin_no:
+            return JsonResponse({"error": "Missing uin_no"}, status=400)
+        if not (admin_id or role_id):
+            return JsonResponse({"error": "Either admin_id or role_id is required"}, status=400)
+        if update_type not in ["request", "accept"]:
+            return JsonResponse({"error": "update_type must be either 'request' or 'accept'"}, status=400)
+        
+        invoice_qs = InvoiceDetails.objects.filter(uin_no__icontains=uin_no)
+        invoice = invoice_qs.first()
+        if not invoice:
+            return JsonResponse({"error": "No invoice found for given details"}, status=404)
 
-#         if not uin_number:
-#             return JsonResponse({"error": "Missing uin_number"}, status=400)
-#         if not (admin_id or role_id):
-#             return JsonResponse({"error": "Either admin_id or role_id is required"}, status=400)
-#         if update_type not in ["request", "accept"]:
-#             return JsonResponse({"error": "update_type must be either 'request' or 'accept'"}, status=400)
+        customer = invoice.customer
+        if not customer:
+            return JsonResponse({"error": "No customer linked with this invoice"}, status=404)
 
-#         invoice_qs = InvoiceDetails.objects.filter(drone_uin_no=uin_number)
-#         if admin_id:
-#             invoice_qs = invoice_qs.filter(admin_id=admin_id)
-#         if role_id:
-#             invoice_qs = invoice_qs.filter(role_id=role_id)
+        drone_model_qs = CompanyDroneModelInfo.objects.filter(
+            uin_number__iexact=uin_no.strip(),
+            assign_status=1
+        )
+        drone_model_instance = drone_model_qs.first()
+        if not drone_model_instance:
+            return JsonResponse({"error": "No assigned drone model found for given details"}, status=404)
+        agreement = AgreementDetails.objects.filter(drone_unique_code__icontains=uin_no).first()
+        if not agreement:
+            return JsonResponse({"error": "No agreement found for this UIN"}, status=404)
+        
+        admin = None
+        if admin_id:
+            admin = Admin.objects.filter(id=admin_id).first()
+        if not admin:
+            admin = Admin.objects.order_by("id").first()
 
-#         invoice = invoice_qs.first()
-#         if not invoice:
-#             return JsonResponse({"error": "No invoice found for given details"}, status=404)
+        if not admin:
+            return JsonResponse({"error": "No admin found in system"}, status=404)
+        role=Role.objects.filter(id=role_id).first() if role_id else None
+        if role:
+            if update_type == "request" and role.company_name != "Pavaman Aviation":
+                return JsonResponse({"error": "Only Pavaman Aviation role can request status"}, status=403)
+            if update_type == "accept" and role.company_name != "Pavaman Agri Ventures":
+                return JsonResponse({"error": "Only Pavaman Agri Ventures role can accept request"}, status=403)
 
-#         customer = invoice.customer
-#         if not customer:
-#             return JsonResponse({"error": "No customer linked with this invoice"}, status=404)
+        req, created = DroneOperation.objects.get_or_create(
+            drone_model=drone_model_instance, 
+            defaults={
+                "customer": customer,
+                "admin": admin,
+                "role": role,    
+                "agreement": agreement
+            }
+        )
 
-#         drone_model = CompanyDroneModelInfo.objects.filter(
-#             uin_number=uin_number,
-#             assign_status=1
-#         )
-#         if admin_id:
-#             drone_model = drone_model.filter(admin_id=admin_id)
-#         if role_id:
-#             drone_model = drone_model.filter(role_id=role_id)
+        if update_type == "request":
+            req.request_status = 1
+            req.requested_on = timezone.now()
+            req.save(update_fields=['request_status', 'requested_on'])
 
-#         drone_model = drone_model.first()
-#         if not drone_model:
-#             return JsonResponse({"error": "No assigned drone model found for given details"}, status=404)
+            return JsonResponse({
+                "message": "Drone request status updated successfully.",
+                "uin_no": uin_no,
+                "request_status": req.request_status,
+                "requested_on": req.requested_on,
+                "agreement_id": req.agreement.id if req.agreement else None,
+                "admin_id": req.admin.id if req.admin else None,
+                "role_id": role.id if role else None,
+                "customer": {
+                    "id": customer.id,
+                    "name": f"{customer.first_name} {customer.last_name}",
+                    "email": customer.email
+                }
+            }, status=200)
 
-#         req = DroneRequest.objects.filter(drone_model=drone_model).first()
-#         if not req:
-#             return JsonResponse({"error": "No drone request found for this drone"}, status=404)
+        elif update_type == "accept":
+            req.accept_status = 1
+            req.accepted_on = timezone.now()
+            req.save(update_fields=['accept_status', 'accepted_on'])
 
-#         if update_type == "request":
-#             req.request_status = 1
-#             req.request_on = timezone.now()
-#             req.save(update_fields=['request_status', 'request_on'])
+            return JsonResponse({
+                "message": "Drone accept status updated successfully.",
+                "uin_no": uin_no,
+                "accept_status": req.accept_status,
+                "accepted_on": req.accepted_on,
+                "agreement_id": req.agreement.id if req.agreement else None,
+                "role_id": req.role.id if req.role else None,
+                "customer": {
+                    "id": customer.id,
+                    "name": f"{customer.first_name} {customer.last_name}",
+                    "email": customer.email
+                }
+            }, status=200)
 
-#             return JsonResponse({
-#                 "message": "Drone request status updated successfully.",
-#                 "drone_uin_number": uin_number,
-#                 "request_status": req.request_status,
-#                 "request_on": req.request_on,
-#                 "customer": {
-#                     "id": customer.id,
-#                     "name": f"{customer.first_name} {customer.last_name}",
-#                     "email": customer.email
-#                 }
-#             }, status=200)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+def get_drone_status(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            admin_id= data.get('admin_id')
+            role_id = data.get('role_id')
+            if not (admin_id or role_id):
+                return JsonResponse({"error": "Either admin_id or role_id is required"}, status=400)
 
-#         elif update_type == "accept":
-#             req.accept_status = 1
-#             req.accepted_on = timezone.now()
-#             req.save(update_fields=['accept_status', 'accepted_on'])
 
-#             return JsonResponse({
-#                 "message": "Drone accept status updated successfully.",
-#                 "drone_uin_number": uin_number,
-#                 "accept_status": req.accept_status,
-#                 "accepted_on": req.accepted_on,
-#                 "customer": {
-#                     "id": customer.id,
-#                     "name": f"{customer.first_name} {customer.last_name}",
-#                     "email": customer.email
-#                 }
-#             }, status=200)
+            drone_operation = DroneOperation.objects.filter(admin_id).first()
+            if not drone_operation:
+                return JsonResponse({"error": "No drone operation found for this drone model"}, status=404)
 
-#     except Exception as e:
-#         return JsonResponse({"error": str(e)}, status=500)
+            response_data = {
+                "drone_model": {
+                    "company_name": drone_operation.drone_model.company_name,
+                    "model_name": drone_operation.drone_model.model_name,
+                    "serial_number": drone_operation.drone_model.serial_number,
+                    "uin_number": drone_operation.drone_model.uin_number,
+                    "date_of_model": drone_operation.drone_model.date_of_model.strftime('%d-%m-%Y'),
+                },
+                "customer": {
+                    "id": drone_operation.customer.id,
+                    "name": f"{drone_operation.customer.first_name} {drone_operation.customer.last_name}",
+                    "email": drone_operation.customer.email
+                },
+                "agreement_id": drone_operation.agreement.id if drone_operation.agreement else None,
+                "request_status": drone_operation.request_status,
+                "requested_on": drone_operation.requested_on.strftime('%Y-%m-%d %H:%M:%S') if drone_operation.requested_on else None,
+                "accept_status": drone_operation.accept_status,
+                "accepted_on": drone_operation.accepted_on.strftime('%Y-%m-%d %H:%M:%S') if drone_operation.accepted_on else None,
+            }
+            return JsonResponse(response_data, status=200)
+        except Exception as e:
+            return JsonResponse({"error": str(e)}, status=500)

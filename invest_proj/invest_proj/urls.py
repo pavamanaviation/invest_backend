@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-from invest_app.views import (add_role, view_kyc_doc,view_roles,delete_role,update_role,get_models_by_admin,assign_role_permissions,view_role_permissions_by_admin,
+from invest_app.views import (add_role, drone_status, employee_login, view_kyc_doc,view_roles,delete_role,update_role,get_models_by_admin,assign_role_permissions,view_role_permissions_by_admin,
 verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details,upload_drone_models,view_drone_models_by_admin)
 
 # from invest_app.views import check_indian_time 
@@ -52,6 +52,7 @@ urlpatterns = [
     #customer urls
     path('customer-register', customer_register, name='customer_register'),
     path('verify-customer-otp', verify_customer_otp, name='verify_customer_otp'),
+
     path('customer-register-sec-phase', customer_register_sec_phase, name='customer_register_sec_phase'),
     path('customer-login', customer_login, name='customer_login'),
     path('verify-pan', verify_pan_document,name='verify_pan_document'),
@@ -94,7 +95,8 @@ urlpatterns = [
     path('view-receipt', view_installment_receipt, name='view_installment_receipt'),
     path('download-receipt',download_installment_receipt,name='download_installment_receipt'),
     path('payment-history',payment_history,name='payment_history'),
-    #role urls
+    #role url
+    path('employee-login', employee_login, name='employee_login'),
     path('get-models-names',get_all_models_by_role,name='get_all_models_by_role'),
     path('get-details',get_models_data_by_role,name='get_models_data_by_role'),
 
@@ -103,4 +105,5 @@ urlpatterns = [
 
 
     path('download-agreement',download_agreement_by_order,name='download_agreement_by_order'),
+    path("drone-status",drone_status,name="drone_status"),
 ]

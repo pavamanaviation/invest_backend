@@ -6,7 +6,7 @@ import num2words
 from invest_app.utils.shared_imports import *
 from invest_app.utils.sessions import customer_login_required
 from invest_app.utils.indiantime import format_datetime_ist 
-from .models import (Admin, CompanyDroneModelInfo, CustomerRegister,
+from .models import (Admin, CompanyDroneModelInfo, CustomerRegister, DroneOperation,
  InvoiceDetails,PaymentDetails, KYCDetails, CustomerMoreDetails, NomineeDetails, Role,AgreementDetails)
 from invest_app.utils.msg91 import send_bulk_sms
 from invest_app.utils.idfy_verification import (
@@ -437,7 +437,6 @@ def send_otp_email(email, first_name, otp):
     )
     email_message.attach_alternative(html_content, "text/html")
     email_message.send()
-
 @csrf_exempt
 def customer_login(request):
     if request.method != 'POST':
@@ -449,8 +448,7 @@ def customer_login(request):
         mobile_no = data.get('mobile_no')
         token = data.get('token')  # Optional: Google token
 
-        first_name = ''
-        last_name = ''
+        first_name, last_name = '', ''
 
         # ---------------- GOOGLE LOGIN ---------------- #
         if token:
@@ -470,10 +468,11 @@ def customer_login(request):
             if not email:
                 return JsonResponse({"error": "Email not found in Google token."}, status=400)
 
-            customer = CustomerRegister.objects.only("id", "email", "mobile_no", "first_name", "last_name", "register_status", "account_status").filter(email=email, account_status=1).first()
+            customer = CustomerRegister.objects.filter(email=email, account_status=1).first()
             if not customer:
                 return JsonResponse({"error": "Account not found or not verified."}, status=404)
 
+            # Create session
             request.session['customer_id'] = customer.id
             request.session.modified = True
             request.session.save()
@@ -494,95 +493,181 @@ def customer_login(request):
         if not email and not mobile_no:
             return JsonResponse({"error": "Provide email or mobile number or valid Google token."}, status=400)
 
-        # --- 1. Try Customer (optimized with .only) --- #
         customer = None
         if email:
-            customer = CustomerRegister.objects.only("id", "email", "mobile_no", "first_name", "last_name", "register_status", "account_status").filter(email=email, account_status=1).first()
+            customer = CustomerRegister.objects.filter(email=email, account_status=1).first()
         if not customer and mobile_no:
-            customer = CustomerRegister.objects.only("id", "email", "mobile_no", "first_name", "last_name", "register_status", "account_status").filter(mobile_no=mobile_no, account_status=1).first()
+            customer = CustomerRegister.objects.filter(mobile_no=mobile_no, account_status=1).first()
 
-        if customer:
-            otp = generate_otp()
-            customer.otp = otp
-            customer.changed_on = timezone.now()
-            customer.save(update_fields=['otp', 'changed_on'])
+        if not customer:
+            return JsonResponse({"error": "Customer account not found or not verified."}, status=404)
 
-            if email:
-                send_otp_email(email, customer.first_name or first_name, otp)
-            if mobile_no:
-                send_bulk_sms([mobile_no],otp)
-                # send_otp_sms([mobile_no], f"Hi, this is your OTP for login to Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it.")
+        otp = generate_otp()
+        customer.otp = otp
+        customer.changed_on = timezone.now()
+        customer.save(update_fields=['otp', 'changed_on'])
 
-            return JsonResponse({
-                "message": "OTP sent for customer login. It is valid for 2 minutes.",
-                "otp":otp,
-                "customer_id": customer.id,
-                "status_code": 200
-            }, status=200)
-
-        # --- 2. Try Admin --- #
-        admin = None
         if email:
-            admin = Admin.objects.filter(email=email, status=1).first()
-        if not admin and mobile_no:
-            admin = Admin.objects.filter(mobile_no=mobile_no, status=1).first()
+            send_otp_email(email, customer.first_name or first_name, otp)
+        if mobile_no:
+            send_bulk_sms([mobile_no], otp)
 
-        if admin:
-            otp = generate_otp()
-            admin.otp = otp
-            admin.otp_send_type = "email" if email else "mobile"
-            admin.changed_on = timezone.now()
-            admin.save(update_fields=["otp", "otp_send_type", "changed_on"])
-
-            if email:
-                send_otp_email(email, admin.name, otp)
-            if mobile_no:
-                send_bulk_sms([mobile_no],otp)
-                # send_otp_sms([mobile_no], f"Hi Admin {admin.name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
-
-            return JsonResponse({
-                "message": "OTP sent for admin login. It is valid for 2 minutes.",
-                "admin_id": admin.id,
-                "otp":otp,
-                "status_code": 200
-            }, status=200)
-
-        # --- 3. Try Employee (Role) --- #
-        role = None
-        if email:
-            role = Role.objects.filter(email=email, status=1, delete_status=False).first()
-        if not role and mobile_no:
-            role = Role.objects.filter(mobile_no=mobile_no, status=1, delete_status=False).first()
-
-        if role:
-            otp = generate_otp()
-            role.otp = otp
-            role.otp_send_type = "email" if email else "mobile"
-            role.changed_on = timezone.now()
-            role.save(update_fields=["otp", "otp_send_type", "changed_on"])
-
-            full_name = f"{role.first_name} {role.last_name}".strip()
-
-            if email:
-                send_otp_email(email, full_name, otp)
-            if mobile_no:
-                send_bulk_sms([mobile_no],otp)
-                # send_otp_sms([mobile_no], f"Hi {full_name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
-
-            return JsonResponse({
-                "message": "OTP sent for employee login. It is valid for 2 minutes.",
-                "otp":otp,
-                "role_id": role.id,
-                "status_code": 200
-            }, status=200)
-
-        # No account found
-        return JsonResponse({"error": "Account not found or not verified."}, status=404)
+        return JsonResponse({
+            "message": "OTP sent for customer login. It is valid for 2 minutes.",
+            "customer_id": customer.id,
+            "status_code": 200
+        }, status=200)
 
     except json.JSONDecodeError:
         return JsonResponse({"error": "Invalid JSON."}, status=400)
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
+
+# @csrf_exempt
+# def customer_login(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST allowed."}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         email = data.get('email')
+#         mobile_no = data.get('mobile_no')
+#         token = data.get('token')  # Optional: Google token
+
+#         first_name = ''
+#         last_name = ''
+
+#         # ---------------- GOOGLE LOGIN ---------------- #
+#         if token:
+#             google_url = f"https://oauth2.googleapis.com/tokeninfo?id_token={token}"
+#             response = requests.get(google_url)
+#             if response.status_code != 200:
+#                 return JsonResponse({"error": "Google token invalid."}, status=400)
+
+#             google_data = response.json()
+#             if "error" in google_data:
+#                 return JsonResponse({"error": "Invalid Google token."}, status=400)
+
+#             email = google_data.get("email")
+#             first_name = google_data.get("given_name", "")
+#             last_name = google_data.get("family_name", "")
+
+#             if not email:
+#                 return JsonResponse({"error": "Email not found in Google token."}, status=400)
+
+#             customer = CustomerRegister.objects.only("id", "email", "mobile_no", "first_name", "last_name", "register_status", "account_status").filter(email=email, account_status=1).first()
+#             if not customer:
+#                 return JsonResponse({"error": "Account not found or not verified."}, status=404)
+
+#             request.session['customer_id'] = customer.id
+#             request.session.modified = True
+#             request.session.save()
+
+#             return JsonResponse({
+#                 "message": "Login successful via Google.",
+#                 "customer_id": customer.id,
+#                 "email": customer.email,
+#                 "mobile_no": customer.mobile_no,
+#                 "first_name": customer.first_name or first_name,
+#                 "last_name": customer.last_name or last_name,
+#                 "register_status": customer.register_status,
+#                 "account_status": customer.account_status,
+#                 "session_id": request.session.session_key
+#             }, status=200)
+
+#         # ---------------- OTP LOGIN ---------------- #
+#         if not email and not mobile_no:
+#             return JsonResponse({"error": "Provide email or mobile number or valid Google token."}, status=400)
+
+#         # --- 1. Try Customer (optimized with .only) --- #
+#         customer = None
+#         if email:
+#             customer = CustomerRegister.objects.only("id", "email", "mobile_no", "first_name", "last_name", "register_status", "account_status").filter(email=email, account_status=1).first()
+#         if not customer and mobile_no:
+#             customer = CustomerRegister.objects.only("id", "email", "mobile_no", "first_name", "last_name", "register_status", "account_status").filter(mobile_no=mobile_no, account_status=1).first()
+
+#         if customer:
+#             otp = generate_otp()
+#             customer.otp = otp
+#             customer.changed_on = timezone.now()
+#             customer.save(update_fields=['otp', 'changed_on'])
+
+#             if email:
+#                 send_otp_email(email, customer.first_name or first_name, otp)
+#             if mobile_no:
+#                 send_bulk_sms([mobile_no],otp)
+#                 # send_otp_sms([mobile_no], f"Hi, this is your OTP for login to Pavaman Aviation: {otp}. It is valid for 2 minutes. Do not share it.")
+
+#             return JsonResponse({
+#                 "message": "OTP sent for customer login. It is valid for 2 minutes.",
+#                 "otp":otp,
+#                 "customer_id": customer.id,
+#                 "status_code": 200
+#             }, status=200)
+
+#         # --- 2. Try Admin --- #
+#         admin = None
+#         if email:
+#             admin = Admin.objects.filter(email=email, status=1).first()
+#         if not admin and mobile_no:
+#             admin = Admin.objects.filter(mobile_no=mobile_no, status=1).first()
+
+#         if admin:
+#             otp = generate_otp()
+#             admin.otp = otp
+#             admin.otp_send_type = "email" if email else "mobile"
+#             admin.changed_on = timezone.now()
+#             admin.save(update_fields=["otp", "otp_send_type", "changed_on"])
+
+#             if email:
+#                 send_otp_email(email, admin.name, otp)
+#             if mobile_no:
+#                 send_bulk_sms([mobile_no],otp)
+#                 # send_otp_sms([mobile_no], f"Hi Admin {admin.name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
+
+#             return JsonResponse({
+#                 "message": "OTP sent for admin login. It is valid for 2 minutes.",
+#                 "admin_id": admin.id,
+#                 "otp":otp,
+#                 "status_code": 200
+#             }, status=200)
+
+#         # --- 3. Try Employee (Role) --- #
+#         role = None
+#         if email:
+#             role = Role.objects.filter(email=email, status=1, delete_status=False).first()
+#         if not role and mobile_no:
+#             role = Role.objects.filter(mobile_no=mobile_no, status=1, delete_status=False).first()
+
+#         if role:
+#             otp = generate_otp()
+#             role.otp = otp
+#             role.otp_send_type = "email" if email else "mobile"
+#             role.changed_on = timezone.now()
+#             role.save(update_fields=["otp", "otp_send_type", "changed_on"])
+
+#             full_name = f"{role.first_name} {role.last_name}".strip()
+
+#             if email:
+#                 send_otp_email(email, full_name, otp)
+#             if mobile_no:
+#                 send_bulk_sms([mobile_no],otp)
+#                 # send_otp_sms([mobile_no], f"Hi {full_name}, this is your OTP for login to Pavaman: {otp}. Valid for 2 minutes.")
+
+#             return JsonResponse({
+#                 "message": "OTP sent for employee login. It is valid for 2 minutes.",
+#                 "otp":otp,
+#                 "role_id": role.id,
+#                 "status_code": 200
+#             }, status=200)
+
+#         # No account found
+#         return JsonResponse({"error": "Account not found or not verified."}, status=404)
+
+#     except json.JSONDecodeError:
+#         return JsonResponse({"error": "Invalid JSON."}, status=400)
+#     except Exception as e:
+#         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 @customer_login_required 
 @csrf_exempt
 def customer_profile_view(request):
@@ -4833,4 +4918,30 @@ def download_agreement_by_order(request):
     except ClientError as e:
         return JsonResponse({'error': f'S3 Error: {str(e)}'}, status=500)
     except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+def customer_drone_status(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
+    try:
+        data = json.loads(request.body)
+        customer_id = data.get('customer_id')
+        if not customer_id:
+            return JsonResponse({"error": "customer_id is required"}, status=400)
+        try:
+            customer = CustomerRegister.objects.get(id=customer_id)
+        except CustomerRegister.DoesNotExist:
+            return JsonResponse({"error": "Customer not found"}, status=404)
+        try:
+            drone_ope = DroneOperation.objects.get(customer_id=customer_id)
+        except InvoiceDetails.DoesNotExist:
+            return JsonResponse({"error": "Drone with given UIN not found"}, status=404)
+        
+        return JsonResponse({
+            "message": "Drone status fetched successfully",
+            "request_status": drone_ope.request_status,
+            "requested_on": format_datetime_ist(drone_ope.requested_on) if drone_ope.requested_on else "",
+            "accept_status": drone_ope.accept_status,
+            "accepted_on": format_datetime_ist(drone_ope.accepted_on) if drone_ope.accepted_on else "",  
+        })
+    except Exception as e:  
         return JsonResponse({'error': str(e)}, status=500)

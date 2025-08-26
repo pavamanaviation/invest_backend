@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
-from invest_app.views import (add_role, drone_status, employee_login, view_kyc_doc,view_roles,delete_role,update_role,get_models_by_admin,assign_role_permissions,view_role_permissions_by_admin,
+from invest_app.views import (add_role, company_drone_status, employee_login, view_kyc_doc,view_roles,delete_role,update_role,get_models_by_admin,assign_role_permissions,view_role_permissions_by_admin,
 verify_otp,admin_customer_details,admin_customer_kyc_details,admin_nominee_details,upload_drone_models,view_drone_models_by_admin)
 
 # from invest_app.views import check_indian_time 
@@ -105,5 +105,5 @@ urlpatterns = [
 
 
     path('download-agreement',download_agreement_by_order,name='download_agreement_by_order'),
-    path("drone-status",drone_status,name="drone_status"),
+    path("company_drone-status",company_drone_status,name="drone_status"),
 ]

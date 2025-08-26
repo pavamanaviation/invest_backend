@@ -1402,7 +1402,7 @@ def view_drone_models_by_admin(request):
     except Exception as e:
         return JsonResponse({"error": f"Unexpected error: {str(e)}"}, status=500)
 @csrf_exempt
-def drone_status(request):
+def company_drone_status(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST method allowed"}, status=405)
     try:

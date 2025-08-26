@@ -4919,29 +4919,45 @@ def download_agreement_by_order(request):
         return JsonResponse({'error': f'S3 Error: {str(e)}'}, status=500)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
+@customer_login_required
+@csrf_exempt
 def customer_drone_status(request):
     if request.method != 'POST':
         return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
     try:
         data = json.loads(request.body)
-        customer_id = data.get('customer_id')
+        # customer_id = data.get('customer_id')
+        customer_id = request.session.get('customer_id')
         if not customer_id:
-            return JsonResponse({"error": "customer_id is required"}, status=400)
+            return JsonResponse({'error': 'Unauthorized: Login required'}, status=403)
         try:
             customer = CustomerRegister.objects.get(id=customer_id)
         except CustomerRegister.DoesNotExist:
             return JsonResponse({"error": "Customer not found"}, status=404)
-        try:
-            drone_ope = DroneOperation.objects.get(customer_id=customer_id)
-        except InvoiceDetails.DoesNotExist:
-            return JsonResponse({"error": "Drone with given UIN not found"}, status=404)
+        drone_ops = DroneOperation.objects.filter(customer_id=customer_id)
+
+        if not drone_ops.exists():
+            return JsonResponse({"error": "No drone operations found for this customer"}, status=404)
+
+        operations_list = []
+        for drone_ope in drone_ops:
+            operations_list.append({
+                "id": drone_ope.id,
+                "uin_no": drone_ope.drone_model.uin_number if drone_ope.drone_model else None,
+                "request_status": drone_ope.request_status,
+                "requested_on": format_datetime_ist(drone_ope.requested_on) if drone_ope.requested_on else "",
+                "accept_status": drone_ope.accept_status,
+                "accepted_on": format_datetime_ist(drone_ope.accepted_on) if drone_ope.accepted_on else "",
+            })
+        kyc = KYCDetails.objects.filter(customer=drone_ope.customer).first()
         
         return JsonResponse({
             "message": "Drone status fetched successfully",
-            "request_status": drone_ope.request_status,
-            "requested_on": format_datetime_ist(drone_ope.requested_on) if drone_ope.requested_on else "",
-            "accept_status": drone_ope.accept_status,
-            "accepted_on": format_datetime_ist(drone_ope.accepted_on) if drone_ope.accepted_on else "",  
+            "customer_id": customer.id,
+            "customer_name": kyc.pan_name,
+            "operations": operations_list
         })
+
     except Exception as e:  
         return JsonResponse({'error': str(e)}, status=500)

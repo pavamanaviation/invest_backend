@@ -4,6 +4,7 @@ from django.utils.dateparse import parse_date
 
 from invest_app.customer_views import generate_otp, send_otp_email
 from invest_app.utils.msg91 import send_bulk_sms
+from invest_app.utils.indiantime import format_datetime_ist
 from .models import (Admin, AgreementDetails, CustomerRegister, DroneOperation, InvoiceDetails, KYCDetails, CustomerMoreDetails,
                       NomineeDetails, PaymentDetails, Permission, Role,CompanyDroneModelInfo)
 import pandas as pd
@@ -1465,6 +1466,8 @@ def company_drone_status(request):
         )
 
         if update_type == "request":
+            if req.request_status == 1:
+                return JsonResponse({"error": "Aleady requested, cannot request again"}, status=400)
             req.request_status = 1
             req.requested_on = timezone.now()
             req.save(update_fields=['request_status', 'requested_on'])
@@ -1479,12 +1482,16 @@ def company_drone_status(request):
                 "role_id": role.id if role else None,
                 "customer": {
                     "id": customer.id,
-                    "name": f"{customer.first_name} {customer.last_name}",
                     "email": customer.email
                 }
             }, status=200)
 
         elif update_type == "accept":
+            if req.request_status != 1:
+                return JsonResponse({"error": "Cannot accept without a request first"}, status=400)
+            if req.accept_status == 1:
+                return JsonResponse({"error": "Already accepted, cannot accept again"}, status=400)
+
             req.accept_status = 1
             req.accepted_on = timezone.now()
             req.save(update_fields=['accept_status', 'accepted_on'])
@@ -1495,49 +1502,105 @@ def company_drone_status(request):
                 "accept_status": req.accept_status,
                 "accepted_on": req.accepted_on,
                 "agreement_id": req.agreement.id if req.agreement else None,
+                "admin_id": req.admin.id if req.admin else None,
                 "role_id": req.role.id if req.role else None,
                 "customer": {
                     "id": customer.id,
-                    "name": f"{customer.first_name} {customer.last_name}",
                     "email": customer.email
                 }
             }, status=200)
 
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-def get_drone_status(request):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            admin_id= data.get('admin_id')
-            role_id = data.get('role_id')
-            if not (admin_id or role_id):
-                return JsonResponse({"error": "Either admin_id or role_id is required"}, status=400)
+@csrf_exempt
+def get_company_drone_status(request):
+    if request.method != 'POST':
+        return JsonResponse({"error": "Only POST method allowed"}, status=405)
 
+    try:
+        data = json.loads(request.body)
+        admin_id = data.get("admin_id")
+        role_id = data.get("role_id")
 
-            drone_operation = DroneOperation.objects.filter(admin_id).first()
-            if not drone_operation:
-                return JsonResponse({"error": "No drone operation found for this drone model"}, status=404)
+        if not admin_id and not role_id:
+            return JsonResponse({"error": "admin_id or role_id is required"}, status=400)
 
-            response_data = {
-                "drone_model": {
-                    "company_name": drone_operation.drone_model.company_name,
-                    "model_name": drone_operation.drone_model.model_name,
-                    "serial_number": drone_operation.drone_model.serial_number,
-                    "uin_number": drone_operation.drone_model.uin_number,
-                    "date_of_model": drone_operation.drone_model.date_of_model.strftime('%d-%m-%Y'),
-                },
-                "customer": {
-                    "id": drone_operation.customer.id,
-                    "name": f"{drone_operation.customer.first_name} {drone_operation.customer.last_name}",
-                    "email": drone_operation.customer.email
-                },
-                "agreement_id": drone_operation.agreement.id if drone_operation.agreement else None,
-                "request_status": drone_operation.request_status,
-                "requested_on": drone_operation.requested_on.strftime('%Y-%m-%d %H:%M:%S') if drone_operation.requested_on else None,
-                "accept_status": drone_operation.accept_status,
-                "accepted_on": drone_operation.accepted_on.strftime('%Y-%m-%d %H:%M:%S') if drone_operation.accepted_on else None,
-            }
-            return JsonResponse(response_data, status=200)
-        except Exception as e:
-            return JsonResponse({"error": str(e)}, status=500)
+        if role_id:
+            role = Role.objects.filter(id=role_id).first()
+            if not role:
+                return JsonResponse({"error": "Invalid role_id"}, status=404)
+
+            admin_id = role.admin.id if role.admin else None
+
+            if not admin_id:
+                return JsonResponse({"error": "No admin linked with this role"}, status=404)
+
+        operations = DroneOperation.objects.filter(admin_id=admin_id)
+
+        if not operations.exists():
+            return JsonResponse({"message": "No operations found for this admin"}, status=404)
+
+        ops_data = []
+        for op in operations:
+            kyc = KYCDetails.objects.filter(customer=op.customer).first()
+            ops_data.append({
+                "id": op.id,
+                "uin_no": op.drone_model.uin_number if op.drone_model else None,
+                "request_status": op.request_status,
+                "accept_status": op.accept_status,
+                "requested_on": format_datetime_ist(op.requested_on) if op.requested_on else "",
+                "accepted_on": format_datetime_ist(op.accepted_on) if op.accepted_on else "",
+                "customer_id": op.customer.id if op.customer else None,
+                "customer_name": kyc.pan_name if kyc else None,
+                "customer_email": op.customer.email if op.customer else None,
+                "customer_mobile": op.customer.mobile_no if op.customer else None,
+                "admin_id": op.admin.id if op.admin else None,
+                "admin_name": op.admin.name if op.admin else None,
+                "role_id": op.role.id if op.role else None,
+            })
+
+        return JsonResponse({"operations": ops_data}, status=200)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+# @csrf_exempt
+# def get_company_drone_status(request):
+#     if request.method != 'POST':
+#         return JsonResponse({"error": "Only POST method allowed"}, status=405)
+
+#     try:
+#         data = json.loads(request.body)
+#         admin_id = data.get("admin_id")
+
+#         if not admin_id:
+#             return JsonResponse({"error": "admin_id is required"}, status=400)
+
+#         operations = DroneOperation.objects.filter(admin_id=admin_id).select_related("customer", "drone_model", "admin")
+
+#         if not operations.exists():
+#             return JsonResponse({"message": "No operations found for this admin"}, status=404)
+
+#         ops_data = []
+#         for op in operations:
+#             kyc = KYCDetails.objects.filter(customer=op.customer).first()
+
+#             ops_data.append({
+#                 "id": op.id,
+#                 "uin_no": op.drone_model.uin_number if op.drone_model else None,
+#                 "request_status": op.request_status,
+#                 "accept_status": op.accept_status,
+#                 "requested_on": op.requested_on.isoformat() if op.requested_on else None,
+#                 "accepted_on": op.accepted_on.isoformat() if op.accepted_on else None,
+#                 "customer_id": op.customer.id if op.customer else None,
+#                 "customer_name": kyc.pan_name if kyc else None,
+#                 "customer_email": op.customer.email if op.customer else None,
+#                 "customer_mobile": op.customer.mobile_no if op.customer else None,
+#                 "admin_id": op.admin.id if op.admin else None,
+#                 "admin_name": op.admin.name if op.admin else None,
+#             })
+
+#         return JsonResponse({"operations": ops_data}, status=200)
+
+#     except Exception as e:
+#         return JsonResponse({"error": str(e)}, status=500)
